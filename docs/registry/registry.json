@@ -1,0 +1,225 @@
+{
+  "schema_version": 1,
+  "harnesses": [
+    {
+      "id": "claude",
+      "store_paths": [
+        "${CLAUDE_CONFIG_DIR:-~/.claude}/${CLAUDE_CODE_PROJECT_DIR_NAME:-projects}/**/*.jsonl",
+        "${CLAUDE_CONFIG_DIR:-~/.claude}/transcripts/**/*.jsonl",
+        "${HOME}/Library/Developer/Xcode/CodingAssistant/ClaudeAgentConfig/${CLAUDE_CODE_PROJECT_DIR_NAME:-projects}/**/*.jsonl",
+        "${MSS_XCODE_CLAUDE_ROOT}/**/*.jsonl",
+        "${MSS_CC_MIRROR_ROOT:-~/.cc-mirror}/*/.claude/${CLAUDE_CODE_PROJECT_DIR_NAME:-projects}/**/*.jsonl",
+        "${MSS_CLAUDE_ROOT}/**/*.jsonl"
+      ],
+      "format_kind": "jsonl",
+      "fixture_paths": [
+        "fixtures/registry/claude-code/session.jsonl"
+      ],
+      "parser_source": "internal/sources/claude.go",
+      "last_verified": "2026-09-10",
+      "display_name": "Claude Code",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": ""
+      }
+    },
+    {
+      "id": "codex",
+      "store_paths": [
+        "${CODEX_HOME:-~/.codex}/sessions/**/rollout-*.jsonl",
+        "${CODEX_HOME:-~/.codex}/sessions/**/rollout-*.jsonl.zst",
+        "${CODEX_HOME:-~/.codex}/archived_sessions/**/rollout-*.jsonl",
+        "${CODEX_HOME:-~/.codex}/archived_sessions/**/rollout-*.jsonl.zst",
+        "${CODEX_HOME:-~/.codex}/history.jsonl",
+        "${MSS_CODEX_ROOT}/sessions/**/rollout-*.jsonl",
+        "${HOME}/Library/Developer/Xcode/CodingAssistant/codex/sessions/**/rollout-*.jsonl",
+        "${HOME}/Library/Developer/Xcode/CodingAssistant/codex/archived_sessions/**/rollout-*.jsonl",
+        "${MSS_XCODE_CODEX_ROOT}/sessions/**/rollout-*.jsonl"
+      ],
+      "format_kind": "jsonl-rollout-and-history",
+      "fixture_paths": [
+        "fixtures/registry/codex/rollout-2026-07-17T09-00-00-registry-codex.jsonl"
+      ],
+      "parser_source": "internal/sources/codex.go",
+      "last_verified": "2026-09-10",
+      "display_name": "Codex CLI",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": ""
+      }
+    },
+    {
+      "id": "cursor",
+      "store_paths": [
+        "~/Library/Application Support/Cursor/User/{globalStorage,workspaceStorage/*}/state.vscdb",
+        "~/.config/Cursor/User/{globalStorage,workspaceStorage/*}/state.vscdb",
+        "${XDG_CONFIG_HOME}/Cursor/User/{globalStorage,workspaceStorage/*}/state.vscdb",
+        "%APPDATA%/Cursor/User/{globalStorage,workspaceStorage/*}/state.vscdb",
+        "${CURSOR_CONFIG_DIR:-~/.cursor}/projects/**/agent-transcripts/**/*.jsonl",
+        "${CURSOR_CONFIG_DIR:-~/.cursor}/chats/*/*/store.db",
+        "${MSS_CURSOR_ROOT}",
+        "${MSS_CURSOR_CLI_ROOT}"
+      ],
+      "format_kind": "sqlite-kv-or-jsonl",
+      "fixture_paths": [
+        "fixtures/registry/cursor/projects/registry-demo/agent-transcripts/registry-cursor.jsonl"
+      ],
+      "parser_source": "internal/sources/cursor.go",
+      "last_verified": "2026-10-01",
+      "display_name": "Cursor",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": "sqlite3 (IDE chats, CLI tool output)"
+      },
+      "gaps": {}
+    },
+    {
+      "id": "deepseek",
+      "store_paths": [
+        "${DSH_HOME:-~/.dsh}/sessions/*/session-*/session.v4.jsonl.zstd",
+        "${DSH_HOME:-~/.dsh}/sessions/*/session-*/session.v3.jsonl.zstd",
+        "${DSH_HOME:-~/.dsh}/sessions/*/session-*/session.jsonl.zstd",
+        "${DSH_HOME:-~/.dsh}/sessions/*/session-*/session.jsonl",
+        "${MSS_DEEPSEEK_ROOT}/*/session-*/session.v4.jsonl.zstd"
+      ],
+      "format_kind": "jsonl",
+      "fixture_paths": [
+        "fixtures/registry/deepseek/sessions/--work-pgbouncer-lab--/session-eaf5c9ac-0e47-4d2f-b982-8bae306062d1/session.jsonl"
+      ],
+      "parser_source": "internal/sources/deepseek.go",
+      "last_verified": "2026-10-02",
+      "display_name": "DeepSeek Harness",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": false,
+        "handoff": "paste",
+        "prereq": "zstd"
+      },
+      "gaps": {
+        "resume": {
+          "state": "impossible",
+          "why": "dsh ships two apps, headless and web; neither takes a session id. The launcher documents a tui profile that this release has no bundle for, and reopening a conversation is something the web UI sidebar does, not a command mss can print",
+          "source": "no resume flag in dsh 0.1.1-rc.2 headless or web"
+        }
+      }
+    },
+    {
+      "id": "grok",
+      "store_paths": [
+        "${GROK_HOME:-~/.grok}/sessions/**/updates.jsonl",
+        "${MSS_GROK_ROOT}/sessions/**/updates.jsonl",
+        "${GROK_HOME:-~/.grok}/grok.db"
+      ],
+      "format_kind": "acp-jsonl-with-json-metadata",
+      "fixture_paths": [
+        "fixtures/registry/grok/sessions/workspace%2Fregistry-demo/registry-grok/updates.jsonl"
+      ],
+      "parser_source": "internal/sources/grok.go",
+      "last_verified": "2026-08-24",
+      "display_name": "Grok Build",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": "sqlite3 (grok-dev store)"
+      },
+      "gaps": {}
+    },
+    {
+      "id": "omp",
+      "store_paths": [
+        "${MSS_OMP_ROOT:-~/.omp/agent/sessions}/**/*.jsonl",
+        "~/.omp/profiles/*/agent/sessions/**/*.jsonl",
+        "${XDG_DATA_HOME}/omp/sessions/**/*.jsonl",
+        "${XDG_DATA_HOME}/omp/profiles/*/sessions/**/*.jsonl"
+      ],
+      "format_kind": "jsonl",
+      "fixture_paths": [
+        "fixtures/registry/omp/session.jsonl"
+      ],
+      "parser_source": "internal/sources/omp.go",
+      "last_verified": "2026-09-06",
+      "display_name": "omp (Oh My Pi)",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": ""
+      },
+      "gaps": {}
+    },
+    {
+      "id": "opencode",
+      "store_paths": [
+        "~/.local/share/opencode/opencode.db",
+        "~/.local/share/opencode/storage/session_diff/ses_*.json",
+        "${XDG_DATA_HOME}/opencode/opencode.db",
+        "${MSS_OPENCODE_DB}",
+        "${MSS_OPENCODE_DIFFS}/ses_*.json"
+      ],
+      "format_kind": "sqlite + json",
+      "fixture_paths": [
+        "fixtures/registry/opencode/opencode.sql",
+        "fixtures/registry/opencode/opencode-v2.sql"
+      ],
+      "parser_source": "internal/sources/opencode.go",
+      "last_verified": "2026-09-30",
+      "display_name": "opencode",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": "sqlite3"
+      }
+    },
+    {
+      "id": "pi",
+      "store_paths": [
+        "${MSS_PI_ROOT:-~/.pi/agent/sessions}/**/*.jsonl"
+      ],
+      "format_kind": "jsonl",
+      "fixture_paths": [
+        "fixtures/registry/pi/session.jsonl"
+      ],
+      "parser_source": "internal/sources/pi.go",
+      "last_verified": "2026-09-06",
+      "display_name": "pi",
+      "capabilities": {
+        "mcp": true,
+        "auto": true,
+        "skill": true,
+        "command": true,
+        "resume": true,
+        "handoff": "exec",
+        "prereq": ""
+      }
+    }
+  ]
+}

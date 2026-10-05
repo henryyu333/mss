@@ -1,0 +1,126 @@
+package main
+
+import (
+	"fmt"
+	"io"
+	"strings"
+
+	"github.com/henryyu333/mss/internal/model"
+	"github.com/henryyu333/mss/internal/policy"
+	"github.com/henryyu333/mss/internal/search"
+)
+
+// policyFilterHits drops search hits the trust policy blocks on this
+// activation path. The default policy blocks nothing.
+func policyFilterHits(activation string, hits []search.Hit) []search.Hit {
+	kept, _ := policyFilterHitsCounted(activation, hits)
+	return kept
+}
+
+// policyFilterHitsCounted also reports how many hits the policy took away.
+//
+// Without the count, "nothing matched" and "a rule hides it on this path" are
+// the same empty answer — and only the second one is something the reader can
+// act on (#680).
+func policyFilterHitsCounted(activation string, hits []search.Hit) ([]search.Hit, int) {
+	before := len(hits)
+	kept := policy.Filter(policy.Load(), activation, hits, func(h search.Hit) string {
+		return h.Session.Project
+	})
+	return kept, before - len(kept)
+}
+
+// policyHiddenNote is the one line that names the policy when it is the reason
+// an answer is empty.
+func policyHiddenNote(activation string, hidden int) string {
+	if hidden <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("mss: the trust policy hides %d matching session%s on this path (%s: %s) — see %s\n",
+		hidden, pluralS(hidden), activation, policy.Load().Describe(activation), policy.Path())
+}
+
+// ignoredHiddenNote is the same line for the ignore rule, which withholds by
+// path rather than by activation. It had no line at all: the rule is
+// user-editable, and a broad pattern took rows off every screen with nothing
+// anywhere connecting the two (#2554).
+func ignoredHiddenNote(hidden int) string {
+	return ignoredHiddenNoteFor("listing", hidden)
+}
+
+// ignoredHiddenNoteWhere names the surface, because the same rule takes rows
+// out of an answer as well as out of a listing and the reader is looking at one
+// of them, not at both (#2562).
+func ignoredHiddenNoteFor(where string, hidden int) string {
+	if hidden <= 0 {
+		return ""
+	}
+	pats := policy.Load().IgnorePatterns()
+	return fmt.Sprintf("mss: the ignore rule keeps %d session%s out of this %s (%s)%s\n",
+		hidden, pluralS(hidden), where, strings.Join(pats, ", "), seePolicyFile())
+}
+
+// policyFilterSessionsCounted is the same gate for paths that carry sessions
+// rather than hits — the listing, whose whole output is titles (#937).
+func policyFilterSessionsCounted(activation string, ss []model.Session) ([]model.Session, int) {
+	before := len(ss)
+	kept := policy.Filter(policy.Load(), activation, ss, func(s model.Session) string {
+		return s.Project
+	})
+	return kept, before - len(kept)
+}
+
+// policyFilterSessionsSplit is policyFilterSessionsCounted with the withheld
+// sessions kept rather than counted, for a caller whose note is about the ones
+// its own filters would have shown (#2816).
+func policyFilterSessionsSplit(activation string, ss []model.Session) (keep, withheld []model.Session) {
+	p := policy.Load()
+	for _, s := range ss {
+		if p.Allows(activation, s.Project) {
+			keep = append(keep, s)
+			continue
+		}
+		withheld = append(withheld, s)
+	}
+	return keep, withheld
+}
+
+// policyHiddenProjects names the projects a rule is withholding right now. The
+// view page needs them by name rather than by session: a stored digest carries
+// no project field, so the only way to keep withheld content off a shareable
+// page is to recognise the names inside it (#2315).
+func policyHiddenProjects(activation string, ss []model.Session) map[string]bool {
+	p := policy.Load()
+	hidden := map[string]bool{}
+	for _, s := range ss {
+		if s.Project != "" && !p.Allows(activation, s.Project) {
+			hidden[s.Project] = true
+		}
+	}
+	return hidden
+}
+
+// denyPolicyHidden stops a direct-access command (show, share, handoff) from
+// revealing a session a trust rule withholds. Naming an exact id is still
+// browsing under the search activation — ctx already refuses here (#1026), and
+// last and search never surface the session at all — so a peer's content a rule
+// hides must not leak through a command that happens to take an id. Returns a
+// non-nil error to return, or nil when the session is allowed.
+func denyPolicyHidden(id string, s model.Session, w io.Writer) error {
+	if kept, hidden := policyFilterSessionsCounted(policy.ActivationSearch, []model.Session{s}); len(kept) == 0 {
+		fmt.Fprint(w, policyHiddenNote(policy.ActivationSearch, hidden))
+		return fmt.Errorf("no session matches %q", id)
+	}
+	return nil
+}
+
+// seePolicyFile points at the file the rule is written in, when there is one.
+// The ignore rule has defaults and holds with no file at all, and with no home
+// directory there is no path to name — the sentence used to end in "see " and
+// nothing (#2785).
+func seePolicyFile() string {
+	if p := policy.Path(); p != "" {
+		return " — see " + p
+	}
+	return ""
+}

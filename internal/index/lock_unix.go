@@ -1,0 +1,89 @@
+//go:build !windows
+
+package index
+
+import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"syscall"
+)
+
+func lockDir(dir string) (func(), error) {
+	lockPath := dir + ".lock"
+	// Before anything is created beside it: the swap would park a file at
+	// this path as <dir>.old and then delete it.
+	if err := checkIndexPath(dir); err != nil {
+		return nil, err
+	}
+	// Tighten pre-existing indexes created before the 0700 default.
+	_ = os.Chmod(dir, 0o700)
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	// Try without blocking first, only to learn whether there is a wait to
+	// report: a reader that lands mid-rebuild sits here for the length of it
+	// and printed nothing, so the command looked hung (#994).
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		noteLockWait()
+		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+			f.Close()
+			return nil, fmt.Errorf("lock index: %w", err)
+		}
+	}
+	// Under the lock: finish any swap interrupted mid-rename. Running this
+	// before the flock raced a concurrent swap's missing-dir window (#181).
+	recoverIndexDir(dir)
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
+}
+
+// tryLockDir is lockDir without blocking: ok=false means another process
+// (typically a detached rebuild) holds the lock. Read paths fall back to
+// lock-free snapshot reads — the atomic directory swap plus the corrupt-index
+// recovery retry make that safe, while waiting here would stall an MCP tool
+// call for the length of a rebuild.
+func tryLockDir(dir string) (func(), bool, error) {
+	lockPath := dir + ".lock"
+	// Same refusal as lockDir: a reader that decides to build would delete a
+	// file somebody had at this path.
+	if err := checkIndexPath(dir); err != nil {
+		return nil, false, err
+	}
+	_ = os.Chmod(dir, 0o700)
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
+		if errors.Is(err, fs.ErrPermission) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		// A read-only index is not an error for a reader: a container mount
+		// or a locked-down machine can still answer every question asked of
+		// it. Treat it the way a lock already held is treated — carry on
+		// without one. The directory swap is atomic, so the snapshot read
+		// stays safe.
+		if errors.Is(err, fs.ErrPermission) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, false, nil
+	}
+	recoverIndexDir(dir)
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, true, nil
+}

@@ -1,0 +1,2 @@
+{"type":"user","sessionId":"claude-abc","cwd":"/tmp/demo","timestamp":"2026-01-02T03:04:05Z","message":{"role":"user","content":"Find frobnicator bug"}}
+{"type":"assistant","sessionId":"claude-abc","cwd":"/tmp/demo","timestamp":"2026-01-02T03:04:06Z","message":{"role":"assistant","content":[{"type":"text","text":"The frobnicator bug is in parser.go"}]}}

@@ -1,0 +1,571 @@
+package index
+
+import (
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/henryyu333/mss/internal/model"
+)
+
+// What a machine runs is the most reusable thing it knows, and the record log
+// holds it: 23825 command records over 1165 sessions on the store this was
+// built against. Streaming that log to answer one question costs seconds,
+// which is fine for a command someone typed and far too slow for a hook that
+// fires on every action an agent takes. So the durable part — which commands
+// recur, and how widely — is computed once at build.
+//
+// Only commands that ran in more than one session are kept. A command run once
+// is a keystroke, not a practice: on that store 14346 of 14681 distinct
+// commands are exactly that, and dropping them takes the file from megabytes
+// to kilobytes.
+
+const (
+	commandsFile = "commands.gob"
+	// commandMinSessions is what makes a command worth remembering.
+	commandMinSessions = 2
+	commandTextMax     = 200
+	commandsMax        = 4000
+)
+
+// CommandUse is one command line and how widely this machine has run it.
+type CommandUse struct {
+	Command  string
+	Runs     int
+	Sessions int
+	Last     time.Time
+	// ByProject holds the per-project split, so a caller can apply the trust
+	// policy: exclude withheld projects from both the count AND the last-run
+	// date. Storing only a count leaked the date — a command surfaced from an
+	// allowed project still printed a withheld project's more-recent run. Empty
+	// on a table built before this field existed; the version bump forces the
+	// rebuild that fills it.
+	ByProject map[string]ProjectUse `json:",omitempty"`
+}
+
+// ProjectUse is one project's share of a command: how many distinct sessions
+// ran it there and when it last did.
+type ProjectUse struct {
+	Sessions int
+	Last     time.Time
+	// LastSession is the key of the newest session in this project that ran the
+	// command, so a caller can reach what that session settled — SessionMeta
+	// carries it — without ranking candidates and loading whole sessions. That
+	// search cost 133 ms an action against 21 ms on a surface that fires on
+	// every action (#3001, #3605). Whether a session ran the command is a fact
+	// this table already knows; the ranking only ever existed to guess it.
+	// Empty on a table built before this field; the caller then does the search
+	// it used to do.
+	LastSession string `json:",omitempty"`
+}
+
+// commandProjectCap bounds the per-command project map. A command run in more
+// projects than this is ubiquitous; the extra keys say nothing new and cost
+// bytes across the whole table.
+const commandProjectCap = 24
+
+// projAcc accumulates one project's distinct sessions and last run for a
+// command during a build.
+type projAcc struct {
+	sessions map[string]bool
+	last     time.Time
+	// lastKey is the session behind last, kept so ProjectUse can name it.
+	lastKey string
+}
+
+func commandsPath(dir string) string { return filepath.Join(dir, commandsFile) }
+
+// buildCommands writes the recurring-command table into the build directory.
+// Failures are swallowed: it is an extra, never a reason to fail a build.
+func buildCommands(tmp string, ss []model.Session) {
+	type acc struct {
+		use      CommandUse
+		sessions map[string]bool
+		// byProject holds the distinct session keys and last-run per project.
+		byProject map[string]*projAcc
+	}
+	by := map[string]*acc{}
+	for _, s := range ss {
+		key := s.Harness + ":" + s.ID
+		for _, m := range s.Messages {
+			if m.Role != roleCommand {
+				continue
+			}
+			cmd := withoutExitStatus(strings.TrimSpace(firstTextLine(m.Text)))
+			if cmd == "" || len(cmd) > commandTextMax {
+				continue
+			}
+			low := normalizeCommand(cmd)
+			if low == "" {
+				continue
+			}
+			a := by[low]
+			if a == nil {
+				a = &acc{use: CommandUse{Command: cmd}, sessions: map[string]bool{}, byProject: map[string]*projAcc{}}
+				by[low] = a
+			}
+			a.use.Runs++
+			a.sessions[key] = true
+			pa := a.byProject[s.Project]
+			if pa == nil {
+				pa = &projAcc{sessions: map[string]bool{}}
+				a.byProject[s.Project] = pa
+			}
+			pa.sessions[key] = true
+			if m.Time.After(pa.last) {
+				pa.last, pa.lastKey = m.Time, key
+			}
+			if m.Time.After(a.use.Last) {
+				a.use.Last = m.Time
+			}
+		}
+	}
+	out := make([]CommandUse, 0, len(by))
+	for _, a := range by {
+		if len(a.sessions) < commandMinSessions {
+			continue
+		}
+		a.use.Sessions = len(a.sessions)
+		a.use.ByProject = cappedProjects(a.byProject)
+		out = append(out, a.use)
+	}
+	if len(out) == 0 {
+		return
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Sessions != out[j].Sessions {
+			return out[i].Sessions > out[j].Sessions
+		}
+		return out[i].Command < out[j].Command
+	})
+	if len(out) > commandsMax {
+		out = out[:commandsMax]
+	}
+	_ = writeGob(commandsPath(tmp), out)
+}
+
+// buildCommandsFromIndex rebuilds the table from the records an index already
+// holds, rather than from sessions in memory.
+//
+// The incremental path has only the sessions this update touched, and these
+// counters are aggregates — how many distinct sessions ran a command, in which
+// projects, last when. A subset cannot be merged into an aggregate: for a
+// session being re-read there is no way to subtract what it contributed before.
+// So carrying the table forward was the only option, and it meant hook-tool
+// stayed silent about every command that became a habit after the last full
+// build — which is every habit, since a new session is a new file and that is
+// the path this runs on.
+//
+// Reading it back out of the records is exact, because by this point the
+// records in tmp are the whole corpus: the ones carried over plus the ones this
+// update wrote. It is the same source `mss how` already answers from.
+func buildCommandsFromIndex(tmp string) {
+	type acc struct {
+		use       CommandUse
+		sessions  map[string]bool
+		byProject map[string]*projAcc
+	}
+	by := map[string]*acc{}
+	// Identity is harness:id and nothing guarantees it is unique: two transcripts
+	// named session-1.jsonl in different projects share one manifest row, and the
+	// row carries the winner's project. A full build files each conversation's
+	// commands under its own project, because it reads the session rather than
+	// the row — and the trust policy, --project and the exclude patterns all key
+	// on that. Recomputing from records here would file the loser's commands
+	// under the winner's project, which is the leak ByProject exists to prevent.
+	// A record whose source path is not the row's path is exactly that case;
+	// leave the carried table alone rather than publish a wrong attribution.
+	collided := false
+	err := EachRecordOfRole(tmp, roleCommand, func(meta SessionMeta, r Record) {
+		if collided {
+			return
+		}
+		if r.SourcePath != "" && meta.Path != "" && r.SourcePath != meta.Path {
+			collided = true
+			return
+		}
+		cmd := withoutExitStatus(strings.TrimSpace(firstTextLine(r.Text)))
+		if cmd == "" || len(cmd) > commandTextMax {
+			return
+		}
+		low := normalizeCommand(cmd)
+		if low == "" {
+			return
+		}
+		a := by[low]
+		if a == nil {
+			a = &acc{use: CommandUse{Command: cmd}, sessions: map[string]bool{}, byProject: map[string]*projAcc{}}
+			by[low] = a
+		}
+		a.use.Runs++
+		a.sessions[r.Key] = true
+		pa := a.byProject[meta.Project]
+		if pa == nil {
+			pa = &projAcc{sessions: map[string]bool{}}
+			a.byProject[meta.Project] = pa
+		}
+		pa.sessions[r.Key] = true
+		if r.Time.After(pa.last) {
+			pa.last, pa.lastKey = r.Time, r.Key
+		}
+		if r.Time.After(a.use.Last) {
+			a.use.Last = r.Time
+		}
+	})
+	if err != nil || collided {
+		// An extra, never a reason to fail an update: the carried table stays.
+		return
+	}
+	out := make([]CommandUse, 0, len(by))
+	for _, a := range by {
+		if len(a.sessions) < commandMinSessions {
+			continue
+		}
+		a.use.Sessions = len(a.sessions)
+		a.use.ByProject = cappedProjects(a.byProject)
+		out = append(out, a.use)
+	}
+	if len(out) == 0 {
+		// Nothing recurs any more: the table a full build would not write.
+		// Returning left the carried one in place, and hook-tool kept offering
+		// `mss how` for a command no session runs twice (#4441).
+		_ = os.Remove(commandsPath(tmp))
+		return
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Sessions != out[j].Sessions {
+			return out[i].Sessions > out[j].Sessions
+		}
+		return out[i].Command < out[j].Command
+	})
+	if len(out) > commandsMax {
+		out = out[:commandsMax]
+	}
+	// Atomic, unlike the full build's write: there the file does not exist yet,
+	// here a good carried table is already sitting in tmp. A truncating write
+	// that fails partway would ship an undecodable file, and ReadCommands
+	// answers nothing at all for that — hook-tool would go silent until the
+	// next full rebuild, which is worse than the staleness this replaces.
+	_ = writeGobAtomic(commandsPath(tmp), out)
+}
+
+// cappedProjects keeps at most commandProjectCap projects for a command,
+// choosing the ones with the most sessions (ties broken by name) so the choice
+// is deterministic across rebuilds — a map-order cap could silence a different
+// project on each build. All projects are counted; only storage is trimmed, and
+// only for a command run in more projects than the cap.
+func cappedProjects(byProject map[string]*projAcc) map[string]ProjectUse {
+	names := make([]string, 0, len(byProject))
+	for proj := range byProject {
+		names = append(names, proj)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		ni, nj := len(byProject[names[i]].sessions), len(byProject[names[j]].sessions)
+		if ni != nj {
+			return ni > nj
+		}
+		return names[i] < names[j]
+	})
+	if len(names) > commandProjectCap {
+		names = names[:commandProjectCap]
+	}
+	out := make(map[string]ProjectUse, len(names))
+	for _, proj := range names {
+		pa := byProject[proj]
+		out[proj] = ProjectUse{Sessions: len(pa.sessions), Last: pa.last, LastSession: pa.lastKey}
+	}
+	return out
+}
+
+// ReadCommands loads the recurring-command table. An index built before it
+// existed simply has none.
+func ReadCommands(dir string) []CommandUse {
+	var out []CommandUse
+	if err := readGob(commandsPath(dir), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// CommandSettled is what the newest session that ran this command settled,
+// for the first of the given projects that has one, or "" when nothing does.
+//
+// Two map lookups where the point-of-action hook used to rank candidates and
+// then load whole sessions to ask which of them had run the command: 133 ms an
+// action against 21 ms, on the surface that fires on every action, and nothing
+// warm because almost every action is a command its session has not run before
+// (#3001, #3605). The ranking was only ever guessing at a fact the command
+// table already holds.
+//
+// allow is the trust policy's question, asked per project the way every other
+// caller of this table asks it. A project that fails it is skipped rather than
+// making the whole answer empty: a command run in an allowed project and a
+// withheld one still has a settled line the reader may see.
+func CommandSettled(dir, cmd string, projects []string, allow func(string) bool) string {
+	return CommandSettledOutside(dir, cmd, projects, allow, "")
+}
+
+// CommandSettledOutside is CommandSettled for a caller inside session self:
+// the table keeps only the newest session per project, and once self has run
+// the command and been indexed that is self, whose own words are no history to
+// it. Its project then has nothing to say (#4380).
+func CommandSettledOutside(dir, cmd string, projects []string, allow func(string) bool, self string) string {
+	use, ok := CommandHistory(dir, cmd)
+	if !ok || len(use.ByProject) == 0 {
+		return ""
+	}
+	m, err := readManifestCached(dir)
+	if err != nil {
+		return ""
+	}
+	for _, proj := range projects {
+		pu, ok := use.ByProject[proj]
+		if !ok || pu.LastSession == "" {
+			continue
+		}
+		if allow != nil && !allow(proj) {
+			continue
+		}
+		if meta, ok := m.Sessions[pu.LastSession]; ok && meta.Settled != "" && (self == "" || meta.ID != self) {
+			return meta.Settled
+		}
+	}
+	return ""
+}
+
+// CommandHistory reports how widely this machine has run a command. The match
+// is on the command as written, ignoring case, surrounding space and the "$ "
+// the parsers prefix a stored invocation with — but not on flags: an
+// invocation that differs by a flag is a different invocation.
+func CommandHistory(dir, cmd string) (CommandUse, bool) {
+	// A multi-line command is never the stored single-line one, and matching it
+	// on its first line only is dangerous: "git status\nrm -rf /" would be
+	// endorsed as "this machine has run that command" on the strength of the
+	// harmless first line. Recognise only what was seen in full.
+	if hasSecondLine(cmd) {
+		return CommandUse{}, false
+	}
+	want := normalizeCommand(cmd)
+	if want == "" {
+		return CommandUse{}, false
+	}
+	for _, u := range ReadCommands(dir) {
+		if normalizeCommand(u.Command) == want {
+			return u, true
+		}
+	}
+	return CommandUse{}, false
+}
+
+// CommandHistoryOutside is CommandHistory without session self, for the hook
+// answering inside it: a project whose newest run is self counts one session
+// fewer and loses its date, which was self's (#4380).
+func CommandHistoryOutside(dir, cmd, self string) (CommandUse, bool) {
+	use, ok := CommandHistory(dir, cmd)
+	if !ok || self == "" || len(use.ByProject) == 0 {
+		return use, ok
+	}
+	m, err := readManifestCached(dir)
+	if err != nil {
+		return use, ok
+	}
+	by := make(map[string]ProjectUse, len(use.ByProject))
+	for proj, pu := range use.ByProject {
+		if meta, found := m.Sessions[pu.LastSession]; found && meta.ID == self {
+			pu.Sessions--
+			pu.Last, pu.LastSession = time.Time{}, ""
+			if pu.Sessions <= 0 {
+				continue
+			}
+		}
+		by[proj] = pu
+	}
+	use.ByProject = by
+	return use, ok
+}
+
+// SessionRanCommand reports whether this session ran the command, comparing the
+// way CommandHistory does. It is how a caller with a session in hand — the tool
+// hook, holding the promoted decisions of a project — can ask whether the
+// decision is about the command about to run (#2516).
+func SessionRanCommand(s model.Session, cmd string) bool {
+	want := normalizeCommand(cmd)
+	if want == "" || hasSecondLine(cmd) {
+		return false
+	}
+	for _, m := range s.Messages {
+		if m.Role != roleCommand {
+			continue
+		}
+		if normalizeCommand(m.Text) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// CrossBase is filepath.Base that splits on both separators regardless of the
+// host OS. A store synced from Windows holds paths like C:\src\main.go; on a
+// Unix host filepath.Base leaves them whole, so a same-file lookup missed and
+// the two "basename" notions disagreed with the hook's own splitter.
+func CrossBase(p string) string {
+	if i := strings.LastIndexAny(p, `/\`); i >= 0 && i+1 < len(p) {
+		return p[i+1:]
+	}
+	return p
+}
+
+// CrossDirBase is the file name with the directory above it — `handlers/service.go`
+// — which is what tells two files of the same name apart. Empty directory when
+// the path has none.
+func CrossDirBase(p string) string {
+	base := CrossBase(p)
+	rest := strings.TrimSuffix(p, base)
+	rest = strings.TrimRight(rest, `/\`)
+	dir := CrossBase(rest)
+	if dir == "" || dir == rest && !strings.ContainsAny(p, `/\`) {
+		return base
+	}
+	return dir + "/" + base
+}
+
+// SameFile reports whether a stored path and the one being asked about are the
+// same file.
+//
+// Paths are stored as the session saw them — absolute in one harness, relative
+// in another — so the comparison cannot be on the path as written. It used to
+// be on the file name alone, and one name in five on a real store then pooled
+// several real files: 439 of 2169, worst `00-scroll-00.png` in 289 places,
+// `service.go` in 7 packages and `kustomization.yaml` in 9 environments. The
+// line before an edit reported that mixed history as the file's own.
+//
+// The directory above the file separates 238 of those 439 and survives both
+// spellings, since every spelling of one file shares its last two segments. A
+// path stored without a directory — some harnesses record only the name — still
+// matches on the name, because that is all it has.
+func SameFile(stored, want string) bool {
+	if stored == want {
+		return true
+	}
+	sb, wb := CrossBase(stored), CrossBase(want)
+	if sb != wb {
+		return false
+	}
+	sd, wd := CrossDirBase(stored), CrossDirBase(want)
+	if sd == sb || wd == wb {
+		// One of them is a bare name: the name is the whole of what it knows.
+		return true
+	}
+	return sd == wd
+}
+
+// hasSecondLine reports whether the command carries a non-empty line after the
+// first — a compound the stored single-line invocations cannot vouch for.
+func hasSecondLine(cmd string) bool {
+	i := strings.IndexByte(cmd, '\n')
+	return i >= 0 && strings.TrimSpace(cmd[i+1:]) != ""
+}
+
+// FileSessions returns the sessions that worked on a path, from what the
+// manifest already stores. The caller filters by its own trust policy: this
+// package sits below policy and must not decide what is showable.
+func FileSessions(dir, path string) []SessionMeta {
+	base := CrossBase(path)
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return nil
+	}
+	m, err := readManifestCached(dir)
+	if err != nil {
+		return nil
+	}
+	var out []SessionMeta
+	for _, meta := range m.Sessions {
+		for _, t := range meta.Touched {
+			if SameFile(t, path) {
+				out = append(out, meta)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// normalizeCommand puts a command in the form two records can be compared on:
+// the first line, without the "$ " every parser prefixes a stored invocation
+// with, lowercased.
+func normalizeCommand(s string) string {
+	s = withoutExitStatus(strings.TrimSpace(firstTextLine(s)))
+	s = strings.TrimPrefix(s, "$ ")
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
+// withoutExitStatus drops the outcome codex and opencode append to the command
+// line — "$ make test  → exit 2". It is what the command did, not what it was,
+// and keying the table on it split one command into two rows: the runs that
+// worked and the runs that did not, counted apart, with the failing ones
+// invisible to a lookup made with the command as a harness hands it over. On a
+// real store four commands were split this way, `git status --short` into 445
+// runs and 7 (#2590). The status stays in the records, where the fix-pair miner
+// reads it (commandFailed).
+func withoutExitStatus(s string) string {
+	cmd, _, _ := CommandExitOutcome(s)
+	return cmd
+}
+
+// commandExitMarker is the shape a source appends when it knows what a command
+// returned: two spaces, the marker, the digits, end of string
+// (internal/sources/codex.go, internal/sources/opencode.go).
+const commandExitMarker = "  → exit "
+
+// CommandWithoutExitStatus is withoutExitStatus for the surfaces outside this
+// package that group commands themselves — `mss how` counts its own rows over
+// the record log and split the same command the same way.
+func CommandWithoutExitStatus(s string) string { return withoutExitStatus(s) }
+
+// CommandExitStatus reads the outcome withoutExitStatus strips, for the
+// surfaces that group commands themselves and then have to say what those runs
+// did. The same strict shape: two spaces, the marker, digits to the end.
+func CommandExitStatus(s string) (int, bool) {
+	_, code, recorded := CommandExitOutcome(s)
+	return code, recorded
+}
+
+// CommandExitOutcome splits a command from the exit status a source appended to
+// it, for every reader of that suffix.
+//
+// recorded is whether the marker is there as the shape it is written in — two
+// spaces, the marker, digits, end of record. Read anywhere in the record it
+// took `echo "  → exit 1" >> notes.txt` for a command that failed (#2820); read
+// without the digits it cut prose that merely ends like the marker (#2048).
+func CommandExitOutcome(s string) (cmd string, code int, recorded bool) {
+	trimmed := strings.TrimRight(s, " \t\r\n")
+	i := strings.LastIndex(trimmed, commandExitMarker)
+	if i < 0 {
+		return s, 0, false
+	}
+	token := trimmed[i+len(commandExitMarker):]
+	if token == "" {
+		return s, 0, false
+	}
+	n := 0
+	for _, r := range token {
+		if r < '0' || r > '9' {
+			// Not the marker but prose that ends like it — "→ exit later" —
+			// and cutting the line there loses what the command was (#2048).
+			return s, 0, false
+		}
+		n = n*10 + int(r-'0')
+	}
+	return strings.TrimSpace(trimmed[:i]), n, true
+}
+
+// firstTextLine is the first line of a record, which for a command record is
+// the invocation itself.
+func firstTextLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}

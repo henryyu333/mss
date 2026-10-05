@@ -1,0 +1,193 @@
+package search
+
+import (
+	"github.com/henryyu333/mss/internal/digest"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/henryyu333/mss/internal/model"
+)
+
+// answerAfter returns the assistant reply that followed a matched user turn,
+// trimmed to the part worth carrying.
+//
+// A recall query describes a symptom, so the user turn always scores highest on
+// term overlap and its snippet hands back a restatement of the question. Asked
+// about a real incident, an agent said so out loud: "the recall only preserved
+// the incident title, not the exact fix". The fix was in the very next message.
+// AnswerAfter is called from the recall path rather than from scoring: search
+// returns only the messages that matched, so the reply does not exist in memory
+// at scoring time and has to be read back from the index.
+func AnswerAfter(messages []model.Message, i int) string {
+	// A reply that records an outcome wins over an earlier one that does not.
+	// DecisionText never comes back empty for a reply with words in it — it
+	// falls through to the opening — so taking the first non-empty answer
+	// returned whatever the agent said first, and what it says first is usually
+	// what it is about to do: "Проверяю, что экспортер теперь перестал
+	// ретраить" was attached as the answer while the reply under it held
+	// "Причина найдена: бэкофф считался от нуля". The same mistake #3470 fixed
+	// where a plan led a block, on the line an agent reads as the answer.
+	first := ""
+	for j := i + 1; j < len(messages) && j <= i+3; j++ {
+		m := messages[j]
+		if m.Role == "user" {
+			// The user spoke again; there is no further reply to attach, and
+			// reaching past them would attach someone else's.
+			break
+		}
+		if m.Role != "assistant" {
+			continue
+		}
+		// mss's own credit line is not the answer, and a reply that was
+		// nothing else has none (#4247).
+		reply := withoutOwnCredit(m.Text)
+		if text, ok := decisionSentence(reply); ok {
+			return text
+		}
+		if first == "" {
+			first = DecisionText(reply)
+		}
+	}
+	return first
+}
+
+// decisionPhrases mark the sentence a reader actually wants. They are the
+// shapes engineers use when recording an outcome, in transcripts across every
+// harness mss indexes.
+var decisionPhrases = []string{
+	"we pinned", "we moved", "we dropped", "we switched", "we chose",
+	"decision:", "fixed by", "fixed it by", "the fix", "root cause",
+	"turned out", "traced it to", "instead of", "the cause was",
+	"resolved by", "worked around", "we set", "we added",
+}
+
+// carriesDecisionSentence is the shared recogniser, applied to one sentence.
+//
+// decisionPhrases below is English and was the whole test, while the blocks mss
+// injects have used digest.CarriesDecision — both languages, and the
+// plan-versus-outcome rules — since the store turned out to be Russian-dominant
+// (#2734). So the one structured thing a recall answer adds, the "→ " line under
+// a hit, was picked by the narrower of the two recognisers mss owns. Counted
+// over 1265 distinct assistant lines on a real store: the phrase list marks 34,
+// the shared recogniser 60, and 59 of those are lines the list never sees —
+// "Причина в конфиге: …", "состояние стало пустым".
+//
+// The phrase list stays as a second opinion: it holds shapes the shared rule
+// deliberately leaves out ("we pinned", "we set", "we added"), and on the same
+// sample it alone marks 33 lines.
+func carriesDecisionSentence(low string) bool {
+	if digest.CarriesDecision(low) {
+		return true
+	}
+	for _, phrase := range decisionPhrases {
+		if strings.Contains(low, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+// decisionText picks the sentence that records the outcome, falling back to the
+// opening of the reply. A reply is usually diagnosis-first, so the opening is a
+// reasonable second choice — but a decision sentence anywhere in it beats it.
+func DecisionText(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	sentences := splitSentences(text)
+	low := make([]string, len(sentences))
+	for i, s := range sentences {
+		low[i] = strings.ToLower(s)
+	}
+	if out, ok := decisionSentence(text); ok {
+		return out
+	}
+	return clip(text)
+}
+
+// decisionSentence is the sentence of a reply that records an outcome, and
+// whether there is one at all. DecisionText answers with the reply's opening
+// when there is none, which is a reasonable thing to show and a useless thing
+// to decide on — every caller that has to choose between replies needs the
+// second return value.
+func decisionSentence(text string) (string, bool) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", false
+	}
+	sentences := splitSentences(text)
+	low := make([]string, len(sentences))
+	for i, s := range sentences {
+		low[i] = strings.ToLower(s)
+	}
+	for i, s := range low {
+		if carriesDecisionSentence(s) {
+			{
+				out := sentences[i]
+				// A decision often needs the sentence after it to make sense
+				// ("We pinned pgx to 5.4.3. Revisit when 1.24 ships.").
+				if i+1 < len(sentences) && len(out)+len(sentences[i+1]) < answerCap {
+					out += " " + sentences[i+1]
+				}
+				return clip(out), true
+			}
+		}
+	}
+	return "", false
+}
+
+const answerCap = 260
+
+func clip(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) <= answerCap {
+		return s
+	}
+	cut := answerCap
+	for cut > 0 && !isBoundary(s[cut]) {
+		cut--
+	}
+	if cut == 0 {
+		// No word boundary anywhere in the first 260 bytes, which is every
+		// answer written in Chinese, Japanese or Korean — those scripts put no
+		// spaces between words. Cutting at the cap split the character sitting
+		// on it, and the invalid byte went into the recall payload an agent
+		// reads: measured on a store of eight Chinese sessions, the `→ ` line
+		// under the top hit ended in half a character (#1319).
+		cut = answerCap
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		// Reaching zero means the first 260 bytes hold no character start at
+		// all, which stored text cannot be — records are decoded as UTF-8 and
+		// re-checked on the way in. If it ever happens, the mark alone is the
+		// honest answer: the old cut returned those 260 bytes and handed an
+		// agent a line it could not read.
+	}
+	return strings.TrimSpace(s[:cut]) + "…"
+}
+
+func isBoundary(b byte) bool { return b == ' ' || b == '\n' || b == '\t' }
+
+func splitSentences(text string) []string {
+	var out []string
+	start := 0
+	for i := 0; i < len(text); i++ {
+		if text[i] != '.' && text[i] != '!' && text[i] != '?' && text[i] != '\n' {
+			continue
+		}
+		// A period inside a version or a path is not a sentence end.
+		if text[i] == '.' && i+1 < len(text) && !isBoundary(text[i+1]) {
+			continue
+		}
+		if s := strings.TrimSpace(text[start : i+1]); s != "" {
+			out = append(out, s)
+		}
+		start = i + 1
+	}
+	if s := strings.TrimSpace(text[start:]); s != "" {
+		out = append(out, s)
+	}
+	return out
+}

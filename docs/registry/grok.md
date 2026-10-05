@@ -1,0 +1,47 @@
+# Grok Build session format
+## Store and files
+
+Grok Build stores sessions below `${GROK_HOME:-~/.grok}/sessions/<encoded-cwd>/<session-id>/`. `MSS_GROK_ROOT` overrides where mss reads sessions; `GROK_HOME` relocates the whole Grok tree, including `config.toml`. `updates.jsonl` is the conversation stream and sibling `summary.json` carries metadata. A `.cwd` file beside session directories can recover the working directory when summary metadata is absent. `grok-dev`, another CLI sharing `~/.grok`, writes no session files: its history is in `${GROK_HOME:-~/.grok}/grok.db`, a SQLite store read through `sqlite3`, and `MSS_GROK_DB` points mss at another copy. Each row of `messages` is an AI SDK message: text parts are the turn, `tool-call` parts become commands (`bash`), files, edits and written lines (`read_file`, `write_file`, `edit_file` under `path`), and the `tool-result` parts on `tool` rows tool output.
+
+The working-directory group is URL-encoded, although observed names are not always encoded consistently. mss prefers `summary.json` and `.cwd` over decoding the directory name.
+## Three products share this directory
+
+Grok Build (the desktop product) keeps its history here and reads `config.toml`.
+`grok-dev` keeps its history in `grok.db` beside the config. `@vibe-kit/grok-cli`
+(npm) writes transcripts under a project's `.grok/` directory instead.
+mss reads the ones it finds; it wires nothing and runs nothing.
+
+## Records
+
+`summary.json` includes `info.id`, `info.cwd`, titles, and RFC 3339 creation/update times. Conversation lines use ACP session updates:
+
+```json
+{"timestamp":1784278802,"params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"The first chunk "}},"_meta":{"promptId":"prompt-1"}}}
+```
+
+`user_message_chunk` maps to `user` and `agent_message_chunk` maps to `assistant`. Content is usually `{ "type": "text", "text": "..." }`; arrays of text-bearing parts are also accepted. Timestamps accept Unix seconds or milliseconds. `_meta.agentTimestampMs` is the fallback.
+
+Consecutive assistant chunks with the same `promptId` are joined. Consecutive user chunks with the same `promptIndex` are joined.
+## Spawn tree
+
+`summary.json` records what a session is and where it came from:
+`session_kind` (`subagent`, `subagent_fork`), `parent_session_id`, `agent_name`
+and `forked_at`. mss reads the first three into the session record — they show
+up in `--json` as `kind`, `parent` and `agent`, and `mss show` names the
+session a child was spawned from and the children a parent spawned. A
+`subagent` with no `parent_session_id` keeps its kind and no edge: which
+session asked for it is not written down, and mss does not guess. A
+`grok -p` run is marked `headless`, which says how the session was started,
+not that something spawned it, so mss records no kind for it (#4585).
+## Known quirks and drift
+- The ACP stream contains large tool updates. mss filters lines for message chunk kinds before decoding JSON.- Rewind can truncate and regrow `updates.jsonl`, which looks like growth from
+  the outside. mss compares the prefix hash it recorded: an intact prefix takes
+  the append path and reads only the new bytes, a moved one reparses the stream
+  in full. A live session used to rewrite the whole index on every touch.- `generated_title` takes precedence over `session_summary`.- Missing summary files fall back to directory IDs and the `.cwd` or URL-decoded path.- Path encoding is ambiguous when upstream leaves separators or percent escapes in different forms.- `mss resume` prints `grok --resume <id>` and runs it in the recovered
+  working directory, since Grok Build scopes its session list by directory.
+  It reopens a session from any directory, so a deleted one gets no `cd` and
+  a note instead (#4459).
+  Rows that came out of `grok.db` belong to the other product and get an error
+  instead.
+
+**Last verified:** 2026-08-24 against Grok Build 1.0.5 (macos-aarch64)

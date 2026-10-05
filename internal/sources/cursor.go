@@ -1,0 +1,557 @@
+package sources
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/henryyu333/mss/internal/model"
+)
+
+// Cursor keeps IDE chats in per-user SQLite key-value stores (state.vscdb,
+// table cursorDiskKV: composerData:<id> session objects + bubbleId:<id>:<b>
+// message objects) and CLI agent transcripts as Anthropic-shaped JSONL under
+// ~/.cursor/projects/<encoded-path>/agent-transcripts/.
+
+func CursorUserRoot() string {
+	if v := os.Getenv("MSS_CURSOR_ROOT"); v != "" {
+		return v
+	}
+	h := Home()
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(h, "Library", "Application Support", "Cursor", "User")
+	}
+	if runtime.GOOS == "windows" {
+		// The IDE writes to %APPDATA%\Cursor\User on Windows; the XDG and
+		// ~/.config paths below are not where it writes, so this root resolved to a
+		// directory Cursor never touches and every chat store stayed
+		// invisible. Same resolution roo.go and cline.go already use.
+		app := os.Getenv("APPDATA")
+		if app == "" {
+			app = filepath.Join(h, "AppData", "Roaming")
+		}
+		return filepath.Join(app, "Cursor", "User")
+	}
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		if _, err := os.Stat(filepath.Join(xdg, "Cursor", "User")); err == nil {
+			return filepath.Join(xdg, "Cursor", "User")
+		}
+	}
+	return filepath.Join(h, ".config", "Cursor", "User")
+}
+
+// CursorCLIHome honors Cursor CLI's documented CURSOR_CONFIG_DIR; the IDE's
+// global storage has no relocation variable and stays put.
+func CursorCLIHome() string {
+	return EnvPath("CURSOR_CONFIG_DIR", filepath.Join(Home(), ".cursor"))
+}
+
+// CursorCLIRoot is the transcript-reading root; MSS_CURSOR_CLI_ROOT overrides
+// it without affecting where install writes.
+func CursorCLIRoot() string {
+	return EnvPath("MSS_CURSOR_CLI_ROOT", CursorCLIHome())
+}
+
+// CursorDBs lists state.vscdb stores; modern chats live in globalStorage.
+func CursorDBs() []string {
+	root := CursorUserRoot()
+	var out []string
+	if p := filepath.Join(root, "globalStorage", "state.vscdb"); fileExists(p) {
+		out = append(out, p)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, "workspaceStorage"))
+	if err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			if p := filepath.Join(root, "workspaceStorage", e.Name(), "state.vscdb"); fileExists(p) {
+				out = append(out, p)
+			}
+		}
+	}
+	return out
+}
+
+func CursorTranscripts() []string {
+	root := filepath.Join(CursorCLIRoot(), "projects")
+	var out []string
+	walked, under := walkRoot(root)
+	_ = filepath.WalkDir(walked, func(p string, d os.DirEntry, err error) error {
+		// Regular files only: a FIFO matching the glob would block the
+		// parser's Open forever (same hang walkFiles guards against).
+		if err != nil || !d.Type().IsRegular() {
+			return nil
+		}
+		if !strings.EqualFold(filepath.Ext(p), ".jsonl") {
+			return nil
+		}
+		if cursorPathHasDir(p, "subagents") && os.Getenv("MSS_INCLUDE_SUBAGENTS") != "1" {
+			return nil
+		}
+		if cursorPathHasDir(p, "agent-transcripts") {
+			out = append(out, under(p))
+		}
+		return nil
+	})
+	return out
+}
+
+func cursorPathHasDir(path, want string) bool {
+	for dir := filepath.Dir(path); ; {
+		if strings.EqualFold(filepath.Base(dir), want) {
+			return true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
+	}
+}
+
+func fileExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir()
+}
+
+func LoadCursor() []model.Session {
+	var ss []model.Session
+	for _, db := range CursorDBs() {
+		got, err := ParseCursorDB(db)
+		diagFileError(db, err)
+		ss = append(ss, got...)
+	}
+	ss = append(ss, parseFiles(CursorTranscripts(), ParseCursorTranscript)...)
+	return ss
+}
+
+// ParseCursorDBSince returns the composers touched after t, whole: those
+// whose lastUpdatedAt passed the watermark or that gained a bubble stamped
+// after it, each with every bubble it has. The index replaces those sessions
+// with what comes back (#4450, #4451).
+func ParseCursorDBSince(db string, t time.Time) ([]model.Session, error) {
+	if t.IsZero() {
+		return ParseCursorDB(db)
+	}
+	return parseCursorDB(db, t)
+}
+
+// ParseCursorDB reads composer sessions with a narrow projection — dumping
+// whole JSON values through the sqlite3 pipe on a multi-hundred-MB store
+// takes minutes, extracting scalars takes seconds (same lesson as opencode).
+func ParseCursorDB(db string) ([]model.Session, error) {
+	return parseCursorDB(db, time.Time{})
+}
+
+// cursorComposerListMax is how many composers a pass will name one by one. The
+// query goes to sqlite3 as a single argument, so a list long enough stops being
+// a query at all; past this the caller asks for every composer instead, which
+// costs a scan of a metadata table rather than a failed pass.
+const cursorComposerListMax = 400
+
+// cursorComposerKeyList names, as a SQL value list, the composer rows the given
+// bubbles belong to. A bubble key is "bubbleId:<composerId>:<bubbleId>", which
+// is the only place that link is written down, and a composer row is keyed
+// "composerData:<composerId>" — the shape the reader already falls back to when
+// a row carries no composerId of its own. The list is bounded by what this pass
+// read, so it names the changed composers rather than the store's.
+func cursorComposerKeyList(bubbles []map[string]any) string {
+	seen := map[string]bool{}
+	var out []string
+	for _, b := range bubbles {
+		parts := strings.SplitN(str(b["key"]), ":", 3)
+		if len(parts) != 3 || parts[1] == "" || seen[parts[1]] {
+			continue
+		}
+		seen[parts[1]] = true
+		out = append(out, "'"+sqlEscape("composerData:"+parts[1])+"'")
+	}
+	return strings.Join(out, ",")
+}
+
+func parseCursorDB(db string, since time.Time) ([]model.Session, error) {
+	if fi, err := os.Stat(db); err != nil || fi.Size() == 0 {
+		return nil, nil
+	}
+	const bubbleSelect = `select json_object('key',cast(key as text),` +
+		`'type',json_extract(value,'$.type'),` +
+		`'text',coalesce(json_extract(value,'$.text'), json_extract(value,'$.rawText')),` +
+		`'ts',json_extract(value,'$.timestamp'),` +
+		`'wsdir',json_extract(value,'$.workspaceProjectDir')) ` +
+		`from cursorDiskKV where key >= 'bubbleId:' and key < 'bubbleId;' and value is not null`
+	const composerSelect = `select json_object('key',cast(key as text),` +
+		`'cid',json_extract(value,'$.composerId'),` +
+		`'name',json_extract(value,'$.name'),` +
+		`'created',json_extract(value,'$.createdAt'),` +
+		`'updated',json_extract(value,'$.lastUpdatedAt')) ` +
+		`from cursorDiskKV where key >= 'composerData:' and key < 'composerData;' and value is not null`
+	if since.IsZero() {
+		bubbles, err := cursorQuery(db, bubbleSelect)
+		if err != nil {
+			return nil, err
+		}
+		composers, err := cursorQuery(db, composerSelect)
+		if err != nil {
+			return nil, err
+		}
+		return cursorSessions(db, composers, bubbles), nil
+	}
+	// The clause reads the units the reader does, or the two disagree about
+	// what a store holds (#2086).
+	composerWhere := " and " + newerThanEpoch("json_extract(value,'$.lastUpdatedAt')", since)
+	bubbleWhere := " and " + newerThanEpoch("json_extract(value,'$.timestamp')", since)
+	// The bubbles first, because they decide which composers are worth
+	// reading. Cursor writes a composer's lastUpdatedAt when it feels like it
+	// and the turns arrive regardless, so filtering the composers on their own
+	// stamp skipped every turn written after it — and the next pass, carrying a
+	// later watermark, excluded the bubble on its own stamp too, which loses
+	// the turn for good (#2159).
+	bubbles, err := cursorQuery(db, bubbleSelect+bubbleWhere)
+	if err != nil {
+		return nil, err
+	}
+	moved := map[string]bool{}
+	switch keys := cursorComposerKeyList(bubbles); {
+	case keys == "":
+		// No bubble moved, so no composer can be pulled in by one.
+	case strings.Count(keys, ",") >= cursorComposerListMax:
+		// Past this many the list is the wrong shape for the job: the
+		// query is one argv element to sqlite3, and a long enough one is
+		// refused outright — which would turn a large pass into an error
+		// where it used to be a read. Every composer row comes back
+		// instead; they are metadata, and the ones nothing moved are
+		// dropped below.
+		composerWhere = ""
+		for _, b := range bubbles {
+			if parts := strings.SplitN(str(b["key"]), ":", 3); len(parts) == 3 {
+				moved[parts[1]] = true
+			}
+		}
+	default:
+		composerWhere = " and (" + strings.TrimPrefix(composerWhere, " and ") +
+			" or key in (" + keys + "))"
+	}
+	composers, err := cursorQuery(db, composerSelect+composerWhere)
+	if err != nil {
+		return nil, err
+	}
+	if composerWhere == "" {
+		kept := composers[:0]
+		for _, c := range composers {
+			if moved[cursorComposerID(c)] || epochMS(c["updated"]).After(since) {
+				kept = append(kept, c)
+			}
+		}
+		composers = kept
+	}
+	if len(composers) == 0 {
+		return nil, nil
+	}
+	// A touched composer comes back whole: every bubble it has, not only the
+	// new ones. The index replaces the session with what this returns, and
+	// the new turns alone left its words, asked and touched counting those
+	// turns only (#4451), while a rename, which adds no bubble, had nothing to
+	// return and kept the old title (#4450).
+	whole := ""
+	if len(composers) <= cursorComposerListMax {
+		var ranges []string
+		for _, c := range composers {
+			cid := sqlEscape(cursorComposerID(c))
+			ranges = append(ranges, "(key >= 'bubbleId:"+cid+":' and key < 'bubbleId:"+cid+";')")
+		}
+		whole = " and (" + strings.Join(ranges, " or ") + ")"
+	}
+	if bubbles, err = cursorQuery(db, bubbleSelect+whole); err != nil {
+		return nil, err
+	}
+	return cursorSessions(db, composers, bubbles), nil
+}
+
+// cursorComposerID is a composer row's id, from the row or else its key.
+func cursorComposerID(c map[string]any) string {
+	if cid := str(c["cid"]); cid != "" {
+		return cid
+	}
+	return strings.TrimPrefix(str(c["key"]), "composerData:")
+}
+
+// cursorSessions builds a session per composer from its bubbles; a composer
+// with no text is dropped.
+func cursorSessions(db string, composers, bubbles []map[string]any) []model.Session {
+	if len(composers) == 0 {
+		return nil
+	}
+	byComposer := map[string][]map[string]any{}
+	for _, b := range bubbles {
+		key := str(b["key"]) // bubbleId:<composerId>:<bubbleId>
+		parts := strings.SplitN(key, ":", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		byComposer[parts[1]] = append(byComposer[parts[1]], b)
+	}
+	var out []model.Session
+	for _, c := range composers {
+		cid := cursorComposerID(c)
+		s := model.Session{Harness: "cursor", ID: cid, Project: "-", Path: db, Title: str(c["name"])}
+		s.Touch(epochMS(c["created"]))
+		s.Touch(epochMS(c["updated"]))
+		bs := byComposer[cid]
+		sort.SliceStable(bs, func(i, j int) bool { return epochMS(bs[i]["ts"]).Before(epochMS(bs[j]["ts"])) })
+		for _, b := range bs {
+			text := str(b["text"])
+			if strings.TrimSpace(text) == "" {
+				continue
+			}
+			text = capParsedMessage(text)
+			role := "assistant"
+			if n, ok := numberVal(b["type"]); ok && n == 1 {
+				role = "user"
+			}
+			t := epochMS(b["ts"])
+			if t.IsZero() {
+				t = s.Started
+			}
+			s.Touch(t)
+			s.Messages = append(s.Messages, model.Message{Role: role, Text: text, Time: t})
+			if s.Project == "-" {
+				if ws := str(b["wsdir"]); ws != "" {
+					s.Project = projectName(ws)
+				}
+			}
+		}
+		if len(s.Messages) > 0 {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func cursorQuery(db, q string) ([]map[string]any, error) {
+	// json_object rather than the shell's -json mode, which is quadratic in
+	// what it escapes — see sqliteRows. A bubble's text is a chat turn.
+	cmd, stopRead := sqliteReadCmd(db, q)
+	defer stopRead()
+	b, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("cursor sqlite: %w", err)
+	}
+	if len(b) == 0 {
+		return nil, nil
+	}
+	var rows []map[string]any
+	dec := json.NewDecoder(strings.NewReader(string(b)))
+	dec.UseNumber()
+	for dec.More() {
+		var r map[string]any
+		if err := dec.Decode(&r); err != nil {
+			return nil, err
+		}
+		rows = append(rows, r)
+	}
+	return rows, nil
+}
+
+func numberVal(v any) (int64, bool) {
+	switch x := v.(type) {
+	case json.Number:
+		n, err := x.Int64()
+		return n, err == nil
+	case float64:
+		return int64(x), true
+	}
+	return 0, false
+}
+
+// epochMS reads Cursor's stamps, which it writes in milliseconds — through the
+// same guess every other source uses, because a reader that assumes the unit
+// dates a seconds-stamped store to three weeks after the epoch and says nothing
+// about it (#2094).
+func epochMS(v any) time.Time {
+	if n, ok := numberVal(v); ok {
+		return unixGuess(n)
+	}
+	return time.Time{}
+}
+
+// cursorDialect is Cursor CLI's tool vocabulary, read off transcripts its own
+// binary wrote: `Read`, `Write`, `StrReplace`, `Delete` name a file under
+// `path` (not Claude's `file_path`), and the shell tool is `Shell`. The
+// transcript records no tool results; those come from the chat store beside
+// it (cursor_store.go).
+var cursorDialect = toolDialect{
+	pathKey:   "path",
+	pathTools: map[string]bool{"Read": true, "Write": true, "StrReplace": true, "Delete": true},
+	shellTool: "Shell",
+	// Write is an edit as far as the written side is concerned: its content
+	// is the only record that a created file's lines were ever in a session
+	// (#595).
+	editTools:  map[string]bool{"StrReplace": true, "Write": true},
+	contentKey: "contents",
+}
+
+// ParseCursorTranscript reads a CLI agent transcript: Anthropic wire-shaped
+// JSONL; control lines (turn_ended etc.) carry no role and are skipped.
+func ParseCursorTranscript(path string) ([]model.Session, error) {
+	id := strings.TrimSuffix(filepath.Base(path), ".jsonl")
+	s := model.Session{Harness: "cursor", ID: id, Project: cursorTranscriptProject(path), Path: path}
+	// The file's own time is the fallback: a transcript with no stamp in it at
+	// all still needs a date, and so does one whose stamps mss cannot read.
+	// Where Cursor wrote the turn's own time, that wins — a copy or a restore
+	// moves the modification time and nothing else (#3349).
+	var fileTime time.Time
+	fi, err := os.Stat(path)
+	if err == nil {
+		fileTime = fi.ModTime()
+	}
+	// The stamp Cursor writes ahead of the question, carried forward: an
+	// assistant turn has none of its own and belongs to the question it
+	// answers. Every turn took the modification time before, so a transcript
+	// holding turns a month apart read as one day.
+	at := fileTime
+	stamped := false
+	// The chat store's results, read on the first turn that calls a tool.
+	var results *cursorToolResults
+	read := !IndexCommands() && !IndexToolOutput()
+	err = scanJSONLFromOffset(path, 0, func(m map[string]any) {
+		role, _ := m["role"].(string)
+		if role != "user" && role != "assistant" {
+			return
+		}
+		msg, _ := m["message"].(map[string]any)
+		if msg == nil {
+			return
+		}
+		txt := textFromContent(msg["content"])
+		if t, ok := cursorTurnTime(txt); ok {
+			at = t
+			s.Touch(t)
+			stamped = true
+		}
+		if txt != "" {
+			s.Messages = append(s.Messages, model.Message{Role: role, Text: txt, Time: at})
+		}
+		// A turn that only called tools has no text, so this cannot sit behind
+		// the text check: reading a file and running a build is exactly the
+		// turn that carries no prose.
+		if IndexToolPaths() {
+			if p := toolPathsIn(msg["content"], cursorDialect); p != "" {
+				s.Messages = append(s.Messages, model.Message{Role: RoleFiles, Text: p, Time: at})
+			}
+		}
+		if IndexEdits() {
+			for _, e := range editSpansIn(msg["content"], cursorDialect) {
+				s.Messages = append(s.Messages, model.Message{Role: RoleEdit, Text: e, Time: at})
+			}
+		}
+		if IndexWrites() {
+			for _, w := range wroteRecordsIn(msg["content"], cursorDialect) {
+				s.Messages = append(s.Messages, model.Message{Role: RoleWrote, Text: w, Time: at})
+			}
+		}
+		if !read && cursorCallsTools(msg["content"]) {
+			results, read = cursorStoreResults(cursorStoreFor(path)), true
+		}
+		cursorToolTurn(&s, msg["content"], results, at)
+	})
+	if !stamped {
+		s.Touch(fileTime)
+	}
+	if len(s.Messages) == 0 {
+		return nil, err
+	}
+	return []model.Session{s}, err
+}
+
+// cursorTurnTimeRE is the block Cursor puts ahead of a person's words:
+// `<timestamp>Sunday, Jul 26, 2026, 1:06 PM (UTC+3)</timestamp>`. The zone is
+// an offset from UTC, spelled the way the shell prints it.
+var cursorTurnTimeRE = regexp.MustCompile(`<timestamp>\s*(?:[A-Za-z]+,\s*)?([A-Za-z]{3,}\s+\d{1,2},\s+\d{4},\s+\d{1,2}:\d{2}\s*(?:AM|PM))\s*(?:\(UTC([+-]\d{1,2})(?::(\d{2}))?\))?`)
+
+// cursorTurnTime reads that block. A transcript without one, or with a shape
+// this cannot parse, keeps the file's modification time.
+func cursorTurnTime(text string) (time.Time, bool) {
+	m := cursorTurnTimeRE.FindStringSubmatch(text)
+	if m == nil {
+		return time.Time{}, false
+	}
+	zone := time.UTC
+	if m[2] != "" {
+		h, err := strconv.Atoi(m[2])
+		if err != nil {
+			return time.Time{}, false
+		}
+		mins := 0
+		if m[3] != "" {
+			mins, _ = strconv.Atoi(m[3])
+			if h < 0 {
+				mins = -mins
+			}
+		}
+		zone = time.FixedZone("", h*3600+mins*60)
+	}
+	for _, layout := range []string{"Jan 2, 2006, 3:04 PM", "January 2, 2006, 3:04 PM"} {
+		if t, err := time.ParseInLocation(layout, m[1], zone); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// cursorTranscriptProject decodes ~/.cursor/projects/<Users-me-work-foo>/...
+// back to a path with a greedy existence-checked walk; hyphens in real dir
+// names survive because the literal branch is tried when the split fails.
+func cursorTranscriptProject(path string) string {
+	if cwd, _ := CursorChatCWD(path); cwd != "" {
+		return projectName(cwd)
+	}
+	dir := filepath.Clean(path)
+	for !strings.EqualFold(filepath.Base(filepath.Dir(dir)), "projects") {
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "-"
+		}
+		dir = parent
+	}
+	encoded := filepath.Base(dir)
+	if encoded == "" || encoded == "." {
+		return "-"
+	}
+	if resolved := resolveEncodedPath("-" + encoded); resolved != "" {
+		return projectName(resolved)
+	}
+	parts := strings.Split(encoded, "-")
+	if len(parts) >= 2 {
+		return filepath.Join(parts[len(parts)-2], parts[len(parts)-1])
+	}
+	return encoded
+}
+
+// CursorTranscriptProjectDirBase returns the encoded project dir of a CLI
+// transcript in the form resolveEncodedPath walks. Cursor writes the encoding
+// without a leading separator ("Users-x-app", not "-Users-x-app"), so the
+// prefix is added back here rather than teaching the shared resolver a third
+// dialect.
+func CursorTranscriptProjectDirBase(path string) string {
+	dir := filepath.Clean(path)
+	for !strings.EqualFold(filepath.Base(filepath.Dir(dir)), "projects") {
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+	encoded := filepath.Base(dir)
+	if encoded == "" || encoded == "." {
+		return ""
+	}
+	return "-" + encoded
+}

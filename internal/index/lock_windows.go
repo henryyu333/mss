@@ -1,0 +1,132 @@
+//go:build windows
+
+package index
+
+import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"syscall"
+	"unsafe"
+)
+
+const (
+	lockfileExclusiveLock   = 0x2
+	lockfileFailImmediately = 0x1
+)
+
+var (
+	kernel32         = syscall.NewLazyDLL("kernel32.dll")
+	procLockFileEx   = kernel32.NewProc("LockFileEx")
+	procUnlockFileEx = kernel32.NewProc("UnlockFileEx")
+)
+
+func lockDir(dir string) (func(), error) {
+	lockPath := dir + ".lock"
+	// Before anything is created beside it: the swap would park a file at
+	// this path as <dir>.old and then delete it.
+	if err := checkIndexPath(dir); err != nil {
+		return nil, err
+	}
+	// Tighten pre-existing indexes created before the 0700 default.
+	_ = os.Chmod(dir, 0o700)
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	h := syscall.Handle(f.Fd())
+	var ol syscall.Overlapped
+	// The probe takes its own handle: a failed LOCKFILE_FAIL_IMMEDIATELY on
+	// the handle we are about to block with leaves the lock state on it
+	// ambiguous, and the blocking call that follows never returned. Only to
+	// learn whether there is a wait worth reporting — see lock_unix.go (#994).
+	if probe, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600); err == nil {
+		var pol syscall.Overlapped
+		if lockFileEx(syscall.Handle(probe.Fd()), lockfileExclusiveLock|lockfileFailImmediately, 0, 1, 0, &pol) != nil {
+			noteLockWait()
+		} else {
+			_ = unlockFileEx(syscall.Handle(probe.Fd()), 0, 1, 0, &pol)
+		}
+		_ = probe.Close()
+	}
+	if err := lockFileEx(h, lockfileExclusiveLock, 0, 1, 0, &ol); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("lock index: %w", err)
+	}
+	// Under the lock: finish any swap interrupted mid-rename. Running this
+	// before the lock raced a concurrent swap's missing-dir window (#181).
+	recoverIndexDir(dir)
+	return func() {
+		_ = unlockFileEx(h, 0, 1, 0, &ol)
+		_ = f.Close()
+	}, nil
+}
+
+func lockFileEx(h syscall.Handle, flags, reserved, low, high uint32, ol *syscall.Overlapped) error {
+	r1, _, e1 := procLockFileEx.Call(uintptr(h), uintptr(flags), uintptr(reserved), uintptr(low), uintptr(high), uintptr(unsafe.Pointer(ol)))
+	if r1 == 0 {
+		if e1 != syscall.Errno(0) {
+			return e1
+		}
+		return syscall.EINVAL
+	}
+	return nil
+}
+
+func unlockFileEx(h syscall.Handle, reserved, low, high uint32, ol *syscall.Overlapped) error {
+	r1, _, e1 := procUnlockFileEx.Call(uintptr(h), uintptr(reserved), uintptr(low), uintptr(high), uintptr(unsafe.Pointer(ol)))
+	if r1 == 0 {
+		if e1 != syscall.Errno(0) {
+			return e1
+		}
+		return syscall.EINVAL
+	}
+	return nil
+}
+
+// tryLockDir mirrors the unix non-blocking variant using
+// LOCKFILE_FAIL_IMMEDIATELY.
+func tryLockDir(dir string) (func(), bool, error) {
+	lockPath := dir + ".lock"
+	// Same refusal as lockDir: a reader that decides to build would delete a
+	// file somebody had at this path.
+	if err := checkIndexPath(dir); err != nil {
+		return nil, false, err
+	}
+	_ = os.Chmod(dir, 0o700)
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
+		if errors.Is(err, fs.ErrPermission) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		// A read-only index is not an error for a reader: a container mount
+		// or a locked-down machine can still answer every question asked of
+		// it. Treat it the way a lock already held is treated — carry on
+		// without one. The directory swap is atomic, so the snapshot read
+		// stays safe.
+		if errors.Is(err, fs.ErrPermission) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	h := syscall.Handle(f.Fd())
+	var ol syscall.Overlapped
+	if err := lockFileEx(h, lockfileExclusiveLock|lockfileFailImmediately, 0, 1, 0, &ol); err != nil {
+		f.Close()
+		return nil, false, nil
+	}
+	recoverIndexDir(dir)
+	return func() {
+		var ol2 syscall.Overlapped
+		_ = unlockFileEx(h, 0, 1, 0, &ol2)
+		_ = f.Close()
+	}, true, nil
+}

@@ -1,0 +1,10 @@
+packaging/** text eol=lf
+# The doc-contract tests read a heading as a whole line, so a CRLF checkout
+# breaks eleven of them at once (#2081).
+# text=auto rather than text: docs/assets holds a png and a gif, and git decides
+# by content which files it may normalise.
+docs/** text=auto eol=lf
+# the section scanner asks whether the byte after a heading is '\n' and finds
+# '\r'. Seven tests went red on windows-latest for that reason alone, and only
+# after a build failure stopped hiding them.
+*.md text eol=lf

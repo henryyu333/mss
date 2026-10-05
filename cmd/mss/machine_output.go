@@ -1,0 +1,75 @@
+package main
+
+import (
+	"encoding/json"
+	"io"
+
+	"github.com/henryyu333/mss/internal/jsonout"
+	"github.com/henryyu333/mss/internal/model"
+	"github.com/henryyu333/mss/internal/search"
+)
+
+type recentJSON struct {
+	SchemaVersion int             `json:"schema_version"`
+	Sessions      []model.Session `json:"sessions"`
+	// Withheld is how many rows the trust policy kept out of this listing —
+	// the same fact the text form prints on stderr (#990).
+	Withheld int `json:"policy_withheld,omitempty"`
+}
+
+type sessionWindow struct {
+	Offset   int `json:"offset"`
+	Limit    int `json:"limit"`
+	Total    int `json:"total"`
+	Returned int `json:"returned"`
+}
+
+type sessionJSON struct {
+	SchemaVersion int           `json:"schema_version"`
+	Session       model.Session `json:"session"`
+	Window        sessionWindow `json:"window"`
+}
+
+func printRecentJSONWithheld(w io.Writer, sessions []model.Session, sourceInstance string, withheld int) error {
+	for i := range sessions {
+		sessions[i].Messages = nil
+		sessions[i].SetSource(sourceInstance)
+		// The listing's own printer filters what a transcript supplied; this
+		// path did not, and a title is free text (#3616).
+		sessions[i] = search.SafeSession(sessions[i])
+	}
+	if sessions == nil {
+		sessions = []model.Session{}
+	}
+	return json.NewEncoder(w).Encode(recentJSON{SchemaVersion: jsonout.Version, Sessions: sessions, Withheld: withheld})
+}
+
+// sliceMessages applies --offset and --limit. Both are documented for `mss
+// show` and, until #709, only the JSON path honoured them: the human-readable
+// output printed the whole session, which on a 200k-message transcript is
+// 600 001 lines and exactly what --limit exists to avoid.
+func sliceMessages(ms []model.Message, offset, limit int) []model.Message {
+	total := len(ms)
+	if offset > total {
+		offset = total
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return ms[offset:end]
+}
+
+func printSessionJSON(w io.Writer, session model.Session, offset, limit int, sourceInstance string) error {
+	total := len(session.Messages)
+	session.Messages = sliceMessages(session.Messages, offset, limit)
+	session.SetSource(sourceInstance)
+	session = search.SafeSession(session)
+	return json.NewEncoder(w).Encode(sessionJSON{
+		SchemaVersion: jsonout.Version,
+		Session:       session,
+		Window: sessionWindow{
+			Offset: offset, Limit: limit, Total: total, Returned: len(session.Messages),
+		},
+	})
+}

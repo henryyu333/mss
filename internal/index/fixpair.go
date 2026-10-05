@@ -1,0 +1,1020 @@
+package index
+
+import (
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/henryyu333/mss/internal/model"
+	"github.com/henryyu333/mss/internal/redact"
+)
+
+// Fix pairs: the error a session hit, and the command that came next and made
+// it stop. "Why is this broken" is 22.4% of what people type at an agent —
+// measured over 10462 user turns on a 1165-session store — and the answer is
+// usually a command someone already ran once. Mining it costs nothing: on that
+// same store, 1082 errors are followed by a command, and in 81% of those the
+// error does not come back.
+//
+// The pair is evidence, not a claim that the command is a fix. What earns a
+// pair is sequence plus silence: the error, then a command, then no repeat of
+// the same error in the records right after it.
+
+const (
+	fixesFile = "fixes.gob"
+	// fixLookAhead is how far past the error a command still counts as an
+	// answer to it. Beyond that the session has moved on to something else.
+	fixLookAhead = 10
+	// The quiet check runs to the end of the session rather than over a window.
+	// Six records was long enough to miss the session hitting the same error
+	// again a little later, which is the transcript saying the command did not
+	// settle it: measured over this machine's transcripts, 104 of the 831 pairs
+	// the miner kept were contradicted that way, and each one is a wrong answer
+	// handed to an agent at the moment it is stuck.
+	// fixOutputWindow is how far past a command its own output can sit. One
+	// record in the ordinary case; two leaves room for a harness that writes
+	// something between them.
+	fixOutputWindow = 2
+	// fixCommandMax bounds what is stored per pair; a command longer than this
+	// is a heredoc or a pasted script, not something to hand back.
+	fixCommandMax = 200
+	// fixesMax bounds the whole file. Newest wins.
+	fixesMax = 2000
+	// fixesCandidateMax bounds the sightings held for a second confirmation.
+	// Newest first, like the pairs themselves, so a candidate ages out rather
+	// than displacing one that just arrived.
+	fixesCandidateMax = 2000
+)
+
+// FixPair is one error and the command that followed it without the error
+// coming back.
+type FixPair struct {
+	// Sig is the friction hash of the normalised error line, so a lookup can
+	// match an error it has never seen the exact text of.
+	Sig uint64
+	// Error is the normalised line, for showing what this pair answers.
+	Error string
+	// Command is what was run next.
+	Command string
+	// Key is harness:id of the session it came from; When is that record's time.
+	Key  string
+	When time.Time
+	// Project is the session's project, so a caller can apply the trust policy
+	// — a peer's command must not surface when imported content is withheld.
+	// Empty on a pair mined before this field existed; the version bump that
+	// ships it forces the rebuild that fills it.
+	Project string
+	// Edit is the file a session changed after the error, for the failures a
+	// command cannot answer. What fixes a failing test is an edit, and the
+	// miner only ever looked for the next command — so the most common failure
+	// an agent sees had no remedy it could record (#2163). Set instead of
+	// Command, never beside it: an edit is evidence of what was changed, not
+	// something a reader can run.
+	Edit string `json:",omitempty"`
+	// Repaired marks the remedy as the failing command corrected — same
+	// program, most of the same words. That is evidence on its own, and of a
+	// different kind than the word rules: the pair is not a command that
+	// happened to follow the error, it is the command that caused it, working.
+	Repaired bool `json:",omitempty"`
+	// Failed is the command that produced the error, stored for a repaired
+	// remedy so the reader can see what the correction was. Without it the
+	// remedy reads as an unrelated line: 107 of the 360 pairs served on a real
+	// store name nothing the error names, because they are not a command about
+	// the error, they are the command that caused it, working.
+	Failed string `json:",omitempty"`
+	// Substitute marks the remedy for a missing program as another program
+	// doing its job on the same arguments: `git ls-remote …/o/r refs/pull/9`
+	// after `gh pr view 9 --repo o/r` failed with `gh: command not found`.
+	// Evidence of the same kind as Repaired — the session wanted exactly this
+	// done and found a way — so it does not wait for a second sighting.
+	Substitute bool `json:",omitempty"`
+	// Candidate marks a sighting that is not a pair yet: the remedy named
+	// nothing the error named, and no other session has done the same thing
+	// after the same error. Evidence of the second kind accumulates across
+	// sessions, and sessions arrive one at a time — so judging a candidate
+	// against the update it arrived in threw it away before the session that
+	// would have confirmed it existed, and the pair was lost for good (#1301).
+	// Kept, and promoted on the second sighting; never served to a caller.
+	Candidate bool `json:",omitempty"`
+}
+
+func fixesPath(dir string) string { return filepath.Join(dir, fixesFile) }
+
+// buildFixes writes the mined pairs into the build directory. Like every other
+// sidecar here, failures are swallowed: this is an extra, never a reason to
+// fail an index build.
+func buildFixes(tmp string, ss []model.Session, keyOf func(model.Session) string) {
+	// Mining is per session and reads nothing shared, and it was 9.4 s of a
+	// 51 s build on a real store — the longest of the four sidecars, with the
+	// rest of the machine idle. Collected per session and flattened in session
+	// order, so what lands on file does not depend on which worker finished
+	// first.
+	perSession := make([][]FixPair, len(ss))
+	parallelForRanked(len(ss), func(i int) {
+		perSession[i] = fixPairsIn(ss[i].Messages, keyOf(ss[i]), ss[i].Project)
+	})
+	var all []FixPair
+	for _, pairs := range perSession {
+		all = append(all, pairs...)
+	}
+	if len(all) == 0 {
+		return
+	}
+	// Sequence alone is weak evidence: on a real store only 13% of "the next
+	// command" mentioned anything the error named, so the other 87% are the
+	// session moving on to unrelated work. A pair is kept when it carries a
+	// second, independent reason to believe it — the command names something
+	// the error named, or the same remedy followed the same error in another
+	// session. That takes 356 pairs down to the ones worth handing an agent.
+	repeats := map[string]int{}
+	for _, p := range all {
+		repeats[fixKey(p)]++
+	}
+	var out []FixPair
+	for _, p := range all {
+		if selfEvidentPair(p) || (repetitionConfirms(p) && repeats[fixKey(p)] >= 2) {
+			out = append(out, p)
+			continue
+		}
+		// Not a pair, and not nothing: the second kind of evidence accumulates
+		// across sessions, and sessions arrive one at a time. Dropping a
+		// sighting here meant the session that would have confirmed it found
+		// nothing to confirm, so a full build reached pairs the same corpus
+		// grown one session at a time never did (#1301).
+		p.Candidate = true
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		return
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].When.After(out[j].When) })
+	// One command per (error, command) is enough — the rest are the same fix
+	// from other days. Keying on the command alone was wrong: a generic remedy
+	// (`go mod tidy`, `npm install`) is the answer to several different errors,
+	// and dropping all but its newest occurrence deleted the pair for every
+	// other signature it settled.
+	seen := map[string]bool{}
+	candidates, pairs := 0, 0
+	kept := out[:0]
+	for _, p := range out {
+		if p.Candidate {
+			if candidates >= fixesCandidateMax {
+				continue
+			}
+			candidates++
+		} else {
+			if pairs >= fixesMax {
+				continue
+			}
+			pairs++
+		}
+		k := fixKey(p)
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		kept = append(kept, p)
+		// Candidates have their own budget above, so the pair cap is what it
+		// was and this one bounds the file as a whole.
+		if len(kept) >= fixesMax+fixesCandidateMax {
+			break
+		}
+	}
+	_ = writeGob(fixesPath(tmp), kept)
+}
+
+// selfEvidentPair reports whether a remedy stands on what it is rather than on
+// having happened before. An edit is never self-evident the way a command that
+// names what the error named is: the error names a test, the remedy names a
+// file, and nothing ties them but a second session doing the same thing.
+func selfEvidentPair(p FixPair) bool {
+	if p.Edit != "" {
+		return false
+	}
+	return p.Repaired || p.Substitute || sharesTerm(p.Error, p.Command)
+}
+
+// MachineFact reports whether the pair answers a program or module missing
+// from this machine with a command that got the job done. That is a fact
+// about the machine, not about the project it was learned in: `timeout` is
+// missing from every checkout on a Mac.
+func (p FixPair) MachineFact() bool {
+	if p.Candidate || p.Command == "" || (!p.Repaired && !p.Substitute) {
+		return false
+	}
+	low := strings.ToLower(p.Error)
+	for _, phrase := range envPhrases {
+		if strings.Contains(low, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+// repetitionConfirms reports whether a second sighting is evidence for this
+// remedy at all.
+//
+// A failing test is repaired by editing the code, so a bare command that
+// followed one is the session moving on, and on a machine where the same
+// routine runs every day it moves on the same way twice. Read off a real store:
+// of the 360 pairs `mss fix` serves, 69 rest on repetition alone; the 48 edits
+// among them mostly name the file the failing test lives in, and of the 21
+// commands eleven answer a red test with `gh pr merge 2532`,
+// `git checkout -q -b work477` or `git status`.
+//
+// Only that shape is refused. `brew services start postgresql` after
+// `psql: connection refused` is a command nothing but a second session ties to
+// the error, and it is still the answer.
+func repetitionConfirms(p FixPair) bool {
+	if p.Edit != "" {
+		return true
+	}
+	return !namedTestFailure(p.Error)
+}
+
+// fixKey identifies one remedy for one error, so the same pair arriving from
+// two sessions can be counted as a repeat.
+func fixKey(p FixPair) string {
+	return strconv.FormatUint(p.Sig, 16) + "|" + strings.ToLower(p.Command) + "|" + strings.ToLower(p.Edit)
+}
+
+// fixTermRE matches the words worth comparing: identifiers, paths, flags.
+var fixTermRE = regexp.MustCompile(`[A-Za-z0-9_./-]{4,}`)
+
+// fixCommonTerms appear in half the commands ever run, or are the prose an
+// error is phrased in, and prove nothing about whether this command answers
+// that error.
+var fixCommonTerms = map[string]bool{
+	// Ubiquitous command words.
+	"bash": true, "sudo": true, "true": true, "false": true, "null": true,
+	"file": true, "http": true, "https": true, "test": true, "main": true,
+	"head": true, "tail": true, "grep": true, "echo": true,
+	// The prose errors are written in — present in the error, meaningless as a
+	// match. "command not found" shares "command"/"found" with any command
+	// mentioning them.
+	"error": true, "command": true, "found": true, "cannot": true,
+	"unable": true, "failed": true, "usage": true, "fatal": true,
+	"invalid": true, "unknown": true, "expected": true, "missing": true,
+}
+
+// sharesTerm reports whether the command names something the error named — the
+// missing binary, the path that was not there, the symbol that was undefined.
+//
+// The match is on whole tokens, not substrings. Substring matching let the
+// remedy for `command not found: timeout` be `kubectl … --request-timeout=20s`
+// because "timeout" is inside "request-timeout" — a wrong answer, and a missing
+// binary is not fixed by a flag that happens to spell it. A hyphen keeps a
+// token whole (fixTermRE), so "request-timeout" no longer matches "timeout".
+func sharesTerm(errLine, cmd string) bool {
+	seen := map[string]bool{}
+	for _, t := range fixTermRE.FindAllString(strings.ToLower(errLine), -1) {
+		t = trimTermEdges(t)
+		if len(t) >= 4 && !fixCommonTerms[t] {
+			seen[t] = true
+		}
+	}
+	if len(seen) == 0 {
+		return false
+	}
+	low := strings.ToLower(cmd)
+	// An install command is allowed to name the missing thing as part of a
+	// longer token: `No module named 'yaml'` is fixed by `pip install pyyaml`,
+	// and `aiokafka` by `pip install aiokafka-python`. That containment is only
+	// trusted when the command is actually installing something — otherwise it
+	// is the `-timeout` flag class this function exists to reject.
+	installing := installVerbRE.MatchString(low)
+	for _, raw := range fixTermRE.FindAllString(low, -1) {
+		t := trimTermEdges(raw)
+		if seen[t] {
+			return true
+		}
+		if installing && len(t) >= 4 {
+			for s := range seen {
+				if strings.Contains(t, s) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// installVerbRE marks a command that installs a package, where naming the
+// missing module inside a longer package name is a real match rather than a
+// coincidence. Only "install" — it is unambiguous (pip/npm/apt/brew/gem/go/
+// cargo install), where "get" and "add" also mean `kubectl get`, `git add`.
+var installVerbRE = regexp.MustCompile(`\binstall\b`)
+
+// trimTermEdges drops the slash and dot the token regex captured at a boundary
+// — a URL matched inside quotes carries leading "//", a path a trailing "/" —
+// so the same identifier compares equal wherever it appeared. It deliberately
+// keeps a leading dash: `command not found: timeout` must match a command that
+// invokes `timeout`, not one that passes a `-timeout` flag to something else.
+func trimTermEdges(t string) string {
+	return strings.Trim(t, "/.")
+}
+
+// lastFrictionIndex records, for every error the session hit, the last record
+// it appears in. The quiet check asks whether an error came back after the
+// command that was supposed to settle it, and asking that by rescanning the
+// tail once per candidate is quadratic: on this machine's transcripts it took
+// a full rebuild from 15.8s to 57.8s. One pass answers it for every pair.
+func lastFrictionIndex(ms []model.Message) map[uint64]int {
+	last := make(map[uint64]int)
+	for i, m := range ms {
+		if m.Role != roleToolOutput && m.Role != "assistant" {
+			continue
+		}
+		for _, raw := range strings.Split(m.Text, "\n") {
+			if line, ok := FrictionLine(raw); ok {
+				last[frictionHash(line)] = i
+			}
+		}
+	}
+	return last
+}
+
+// genericFailure are the shapes isFriction turns away. It turns them away for
+// identity — `Error: ` names nothing a second session can be matched on — and
+// that is a different question from whether the command failed, which is all
+// this asks.
+var genericFailure = []string{
+	"Traceback (most recent", "Error: ", "error: ", "FAIL\t", "--- FAIL", "panic: ",
+}
+
+// outputReadsAsFailure reports whether what a command printed is a failure:
+// either a friction line, which is specific enough to be one, or one of the
+// shapes friction declines to name.
+func outputReadsAsFailure(text string) bool {
+	if _, _, ok := firstFrictionLine(text); ok {
+		return true
+	}
+	for _, raw := range strings.Split(text, "\n") {
+		l := strings.TrimSpace(raw)
+		for _, g := range genericFailure {
+			if strings.HasPrefix(l, g) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// commandFailed reads the exit status the record carries, for the harnesses
+// that store one (codex and opencode append it; Claude does not).
+func commandFailed(text string) bool {
+	_, code, recorded := CommandExitOutcome(text)
+	return recorded && code != 0
+}
+
+// outputFailed reports whether what came back from the command is itself an
+// error. The same friction rules the error side uses, so a command that
+// printed a fresh failure is read as one wherever the exit status is not
+// recorded.
+func outputFailed(ms []model.Message, cmd int) bool {
+	for k := cmd + 1; k < len(ms) && k <= cmd+fixOutputWindow; k++ {
+		if ms[k].Role == roleCommand {
+			return false
+		}
+		if ms[k].Role != roleToolOutput {
+			continue
+		}
+		return outputReadsAsFailure(ms[k].Text)
+	}
+	return false
+}
+
+// commandBefore is the command whose output the error at i came out of: the
+// nearest command record above it, with nothing but its own output in between.
+// A session that printed an error without running anything — a build step the
+// harness ran itself — has none, and gets "".
+func commandBefore(ms []model.Message, i int) string {
+	for k := i - 1; k >= 0 && k >= i-fixOutputWindow; k-- {
+		if ms[k].Role == roleCommand {
+			return strings.TrimSpace(firstLineOf(ms[k].Text))
+		}
+		if ms[k].Role != roleToolOutput {
+			return ""
+		}
+	}
+	return ""
+}
+
+// fixPairsIn mines one session.
+func fixPairsIn(ms []model.Message, key, project string) []FixPair {
+	var out []FixPair
+	lastSeen := lastFrictionIndex(ms)
+	for i, m := range ms {
+		if m.Role != roleToolOutput && m.Role != "assistant" {
+			continue
+		}
+		line, sig, ok := firstFrictionLine(m.Text)
+		if !ok {
+			continue
+		}
+		// The command that produced this error, for the remedy that is that
+		// same command corrected.
+		failedCmd := commandBefore(ms, i)
+		// The shell could not run the line at all: the answer is that line in a
+		// form that runs, or nothing.
+		env := commandLevelFailure(m.Text, line)
+		if env {
+			// An error that names the missing program names the line it came
+			// from. The record before the error is not always that line:
+			// Hermes runs a turn's calls together and stores every output after
+			// all of the commands, and a script fails on its ninth line, not
+			// its first.
+			if ran := commandRunningBefore(ms, i, missingProgram(line)); ran != "" {
+				failedCmd = ran
+			} else if failedCmd == "" {
+				failedCmd = commandRunningBefore(ms, i, "")
+			}
+		}
+		// The first file the session changed after the error, kept in case the
+		// window holds no command that answers it.
+		edited := ""
+		paired := false
+		for j := i + 1; j < len(ms) && j <= i+fixLookAhead; j++ {
+			if ms[j].Role == roleEdit {
+				// No file edit answers a line the shell refused; it is the
+				// session going back to its work.
+				if edited == "" && !env {
+					edited = strings.TrimSpace(firstLineOf(ms[j].Text))
+				}
+				continue
+			}
+			if ms[j].Role != roleCommand {
+				continue
+			}
+			cmd := strings.TrimSpace(firstLineOf(ms[j].Text))
+			if cmd == "" || len(cmd) > fixCommandMax || opensMoreInput(cmd) {
+				// A heredoc or pasted script right after the error is not the
+				// remedy; keep scanning the window for the real one-liner two
+				// records on, instead of abandoning the error entirely.
+				//
+				// The length bound is what caught most of those, and it caught
+				// them by luck: a short first line — `python - <<'EOF'` — was
+				// stored whole and handed to an agent as the command to run,
+				// where it waits on input that is not coming (#2051).
+				continue
+			}
+			if lastSeen[sig] > j {
+				break
+			}
+			// A command that failed is not a remedy for anything, and handing
+			// one to an agent at the moment it is stuck is the worst place to
+			// be wrong. Two ways to know: the record says so, where the
+			// harness stored the exit status, and the output right after it
+			// carries an error of its own. Keep scanning the window — a
+			// session that tried something and failed usually tries again,
+			// and the retry is the pair worth having.
+			if commandFailed(ms[j].Text) || outputFailed(ms, j) {
+				continue
+			}
+			// Reading something is not fixing it. The rule that keeps a pair —
+			// the command names what the error named — is satisfied by
+			// construction when the command greps for the symbol the compiler
+			// complained about, so the table filled with the step an agent
+			// takes between hitting an error and solving it.
+			//
+			// Unless the command is the failing one corrected. Then what it
+			// does is beside the point: the agent wanted to run exactly this,
+			// the shell would not let it, and the corrected line is the whole
+			// remedy. The wall this was found on is zsh refusing
+			// `--include=*.go` — a grep, rejected here as investigation, and
+			// one of the most repeated walls on the machine that mined it.
+			repaired := repairedVariant(failedCmd, cmd)
+			substituted := false
+			// Only when the refused line is known: without it there is nothing
+			// to hold the next command against, and that command is judged
+			// the way every other remedy is.
+			if env && failedCmd != "" {
+				repaired, substituted = envRemedy(line, failedCmd, cmd)
+				// Anything else after a refused line is the session moving
+				// on, and handed back it reads as the answer. An install is
+				// still one, named or not: `brew install ripgrep` answers
+				// `command not found: rg`.
+				if !repaired && !substituted && !sharesTerm(line, cmd) && !installVerbRE.MatchString(strings.ToLower(cmd)) {
+					continue
+				}
+			}
+			if !repaired && !substituted && investigationCommand(cmd) {
+				continue
+			}
+			// A command that names a scratch file is not a remedy anyone can
+			// run, including the session that ran it: an agent scripts an edit
+			// into a temp file, runs it, then re-runs the suite, and the whole
+			// line reads as the fix for the failing test. On a real store that
+			// was 38 of 186 confirmed pairs (#2163). Keep scanning — the
+			// durable command usually follows.
+			if namesAnEphemeralPath(cmd) {
+				continue
+			}
+			// The failing command travels with the remedy that corrects it, and
+			// only then: it is there to explain the remedy, and the same bound
+			// the remedy has applies — a pasted script is not something to show.
+			failed := ""
+			if repaired && len(failedCmd) <= fixCommandMax {
+				failed = failedCmd
+			}
+			out = append(out, FixPair{Sig: sig, Error: line, Command: cmd, Key: key,
+				When: ms[j].Time, Project: project, Repaired: repaired, Failed: failed,
+				Substitute: substituted})
+			paired = true
+			break
+		}
+		// No command answered it, and the session changed a file: that is the
+		// remedy for a failing test, which is what the command window can
+		// never hold.
+		if !paired && edited != "" && looksLikeEditedPath(edited) {
+			out = append(out, FixPair{Sig: sig, Error: line, Edit: edited, Key: key, When: m.Time, Project: project})
+		}
+	}
+	return out
+}
+
+// ephemeralPathRE matches a path under a directory whose contents do not
+// survive: the system temp roots, and the per-session scratch directories an
+// agent harness hands its tools. Anchored on a boundary and on the separator
+// that follows, so a package path like ./internal/tmp/ and the word inside a
+// commit message are left alone.
+var ephemeralPathRE = regexp.MustCompile(`(^|[\s"'=(])(/tmp/|/var/folders/|/private/tmp/|\$TMPDIR/|\${TMPDIR}/)|/\.claude/jobs/[^/]+/tmp/`)
+
+// namesAnEphemeralPath reports whether the command reaches for a file that is
+// gone by the time mss would serve it.
+func namesAnEphemeralPath(cmd string) bool {
+	return ephemeralPathRE.MatchString(cmd)
+}
+
+// looksLikeEditedPath keeps the first line of an edit record to what a path can
+// be. The record is "<path>\n<span>", but a span whose file was not recorded
+// would otherwise put a line of source in the table.
+func looksLikeEditedPath(p string) bool {
+	// A path carries no whitespace and none of the punctuation source is
+	// written in. "Makefile" is a path and "\tif err != nil {" is not;
+	// requiring a dot or a slash would have refused the first, which is a real
+	// file at the top of a repository.
+	if p == "" || len(p) > 200 {
+		return false
+	}
+	return !strings.ContainsAny(p, " \t\"'`$(){}[]=;:,*")
+}
+
+// opensMoreInput reports whether a command's first line is only the start of
+// one. A pair stores that line and a reader runs it, so a heredoc opener is not
+// a remedy but a hang.
+func opensMoreInput(cmd string) bool {
+	// A herestring is a whole command — `psql <<< "$sql"` reads from the line
+	// it is on — so it is not one of these.
+	for i := 0; ; {
+		j := strings.Index(cmd[i:], "<<")
+		if j < 0 {
+			break
+		}
+		at := i + j
+		if !strings.HasPrefix(cmd[at+2:], "<") {
+			return true
+		}
+		i = at + 3
+	}
+	return strings.HasSuffix(cmd, "\\")
+}
+
+// firstFrictionLine returns the first line of a record that names something
+// specific that went wrong, with its hash.
+func firstFrictionLine(text string) (string, uint64, bool) {
+	for _, raw := range strings.Split(text, "\n") {
+		if line, ok := FrictionLine(raw); ok {
+			return line, frictionHash(line), true
+		}
+	}
+	return "", 0, false
+}
+
+func firstLineOf(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
+// LooksLikeError reports whether any line of the text names something
+// specific that went wrong. Callers use it to tell "never seen this error"
+// apart from "that was not an error".
+func LooksLikeError(text string) bool {
+	for _, raw := range strings.Split(text, "\n") {
+		if _, ok := FrictionLine(raw); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// mergeFixPairs folds newly mined pairs into the table on file: a remedy that
+// names what the error named is a pair at once, anything else waits for a
+// second session to do the same thing.
+func mergeFixPairs(kept, fresh []FixPair) []FixPair {
+	seen := map[string]int{}
+	for _, p := range kept {
+		seen[fixKey(p)]++
+	}
+	repeats := map[string]int{}
+	for _, p := range fresh {
+		repeats[fixKey(p)]++
+	}
+	// A candidate already on file is the evidence a later session needs, so it
+	// counts towards the second sighting — and once something is promoted, the
+	// candidate copy of it goes. Not redundant with the deduplication below:
+	// two sessions carrying the same timestamp sort either way, and when the
+	// candidate copy sorts first it is the one that survives, so the pair the
+	// second sighting just earned is never served.
+	promoted := map[string]bool{}
+	for _, p := range fresh {
+		k := fixKey(p)
+		if selfEvidentPair(p) || (repetitionConfirms(p) && repeats[k]+seen[k] >= 2) {
+			p.Candidate = false
+			kept = append(kept, p)
+			promoted[k] = true
+			continue
+		}
+		p.Candidate = true
+		kept = append(kept, p)
+	}
+	for i := range kept {
+		if promoted[fixKey(kept[i])] {
+			kept[i].Candidate = false
+		}
+	}
+	sort.SliceStable(kept, func(i, j int) bool { return kept[i].When.After(kept[j].When) })
+	written := map[string]bool{}
+	out := kept[:0]
+	candidates := 0
+	for _, p := range kept {
+		k := fixKey(p)
+		if written[k] {
+			continue
+		}
+		// Candidates are bounded on their own. They serve nobody until a second
+		// session confirms them, so letting them share the pair budget would
+		// push real answers out of a table that is read whole.
+		if p.Candidate {
+			if candidates >= fixesCandidateMax {
+				continue
+			}
+			candidates++
+		}
+		written[k] = true
+		out = append(out, p)
+		if len(out) >= fixesMax+fixesCandidateMax {
+			break
+		}
+	}
+	return out
+}
+
+// mergeFixes updates the carried pairs with what the sessions in this
+// incremental update contain.
+//
+// Carrying alone was not enough. A new session is a new file, and a new file
+// never takes the append path, so every session a user starts goes through the
+// incremental rebuild — which is exactly where new pairs come from. Carrying
+// them meant `fix` answered only what the last full build had mined, and on a
+// machine whose stores are append-only that build happens when the index
+// version changes and not otherwise.
+//
+// The pairs already carried keep their place unconditionally: they earned it
+// against the whole corpus, and re-judging them here — where most of that
+// corpus is not in hand — would drop the ones whose evidence was a repeat in a
+// session this update did not touch. Fresh candidates are judged the way a full
+// build judges them, counting a match against a carried pair as the repeat it
+// is.
+func mergeFixes(dir, tmp string, replacements []model.Session, replaced map[string]bool) {
+	carried := ReadFixes(dir)
+	kept := make([]FixPair, 0, len(carried))
+	dirty := false
+	for _, p := range carried {
+		// Whatever this update re-read, it re-mines below; keeping the old rows
+		// too would duplicate a session's pairs on every edit to its file.
+		if replaced[p.Key] {
+			continue
+		}
+		// An index built before this path scrubbed its sessions holds pairs with
+		// the credential still in them, and carrying is all that ever happens to
+		// a pair whose session is not re-read — so without this the leak outlives
+		// the fix for it, indefinitely, on the machine that already has it.
+		if e, counts := redact.Text(p.Error); len(counts) > 0 {
+			p.Error, dirty = e, true
+		}
+		if c, counts := redact.Text(p.Command); len(counts) > 0 {
+			p.Command, dirty = c, true
+		}
+		if f, counts := redact.Text(p.Failed); len(counts) > 0 {
+			p.Failed, dirty = f, true
+		}
+		kept = append(kept, p)
+	}
+	var fresh []FixPair
+	for _, s := range replacements {
+		fresh = append(fresh, fixPairsIn(s.Messages, s.Harness+":"+s.ID, s.Project)...)
+	}
+	if len(fresh) == 0 && len(kept) == len(carried) && !dirty {
+		return
+	}
+	out := mergeFixPairs(kept, fresh)
+	// Atomic, unlike buildFixes above: that one writes into a directory made
+	// moments earlier, where the file cannot exist. This one runs after
+	// carrySidecars has copied the live table into the build directory, and the
+	// swap ships whatever is there. A truncating write that failed partway would
+	// ship an undecodable file, which ReadFixes reports as no pairs at all —
+	// silence until the next full rebuild.
+	_ = writeGobAtomic(fixesPath(tmp), out)
+}
+
+// ReadFixes loads the mined pairs. An index built before they existed simply
+// has none.
+func ReadFixes(dir string) []FixPair {
+	var out []FixPair
+	if err := readGob(fixesPath(dir), &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// fixSignaturesFor is the set of error signatures the text asks about.
+//
+// Ordinarily every line is hashed the way it was at ingest. The fallback is for
+// a line mss stored and could not read back: the shell-position rule (#3445)
+// recognises `zsh:1: no matches found: …` and stores the normalised line
+// without the marker, so the stored line is not friction on its own — and 106
+// of the 1,310 error lines on a real store are that shape. `mss fix` then
+// answered "nothing recorded for that line" and suggested, as the closest it
+// held, the very line it had just been given.
+func fixSignaturesFor(dir, text string) map[uint64]bool {
+	sigs := map[uint64]bool{}
+	for _, raw := range strings.Split(text, "\n") {
+		if line, ok := FrictionLine(raw); ok {
+			sigs[frictionHash(line)] = true
+		}
+	}
+	if len(sigs) > 0 {
+		return sigs
+	}
+	// Exact lines only, and only after nothing hashed: this is mss recognising
+	// its own wording, not a search for something like it.
+	want := map[string]bool{}
+	for _, raw := range strings.Split(text, "\n") {
+		if l := strings.ToLower(strings.TrimSpace(raw)); l != "" {
+			want[l] = true
+		}
+	}
+	if len(want) == 0 {
+		return sigs
+	}
+	for _, p := range ReadFixes(dir) {
+		if want[strings.ToLower(strings.TrimSpace(p.Error))] {
+			sigs[p.Sig] = true
+		}
+	}
+	return sigs
+}
+
+// FixesFor returns the commands that followed this error before, newest first.
+// The text can be a whole pasted stack trace: every line is tried, so the
+// caller does not have to know which one carries the signature. allow, when
+// non-nil, gates each pair by its project — the caller applies its trust
+// policy here, since this package sits below policy.
+func FixesFor(dir, text string, limit int, allow func(project string) bool) []FixPair {
+	if limit <= 0 {
+		limit = 3
+	}
+	sigs := fixSignaturesFor(dir, text)
+	if len(sigs) == 0 {
+		return nil
+	}
+	var out, held []FixPair
+	// The ignore rule, applied here rather than by the seven callers: a FixPair
+	// carries the project and the rule matches on the session's path, so no
+	// caller can apply it — the same shape #2652 measured for the commands
+	// table. Three of those callers speak unasked (the session-start block,
+	// hook-plan, hook-tool-after), and `mss fix` offered a remedy out of the
+	// tree the reader excluded while `mss how` refused to name the very same
+	// command (#2660).
+	//
+	// Loaded only once something matched, so an error nobody has hit pays
+	// nothing for the manifest read.
+	var ignored map[string]bool
+	loaded := false
+	isIgnored := func(project string) bool {
+		if !loaded {
+			ignored, loaded = ProjectsTouchedByIgnore(dir), true
+		}
+		return ignored[project]
+	}
+	for _, p := range ReadFixes(dir) {
+		if !sigs[p.Sig] {
+			continue
+		}
+		if remedyIsTheFailure(p) || remedyIsIrreversible(p.Command) {
+			continue
+		}
+		// One session doing something after an error is not evidence that it
+		// worked; it is half of it. Held back, not thrown away: a caller that
+		// says so when it speaks can have them once the confirmed pairs are
+		// exhausted, which is most of the time — measured over 1057 real
+		// failures on one machine, 112 had a confirmed pair and 373 more had
+		// only this.
+		if p.Candidate {
+			held = append(held, p)
+			continue
+		}
+		if allow != nil && !allow(p.Project) {
+			continue
+		}
+		if isIgnored(p.Project) {
+			continue
+		}
+		out = append(out, p)
+		if len(out) >= limit {
+			break
+		}
+	}
+	// Confirmed first, always. What is held goes behind them and only when
+	// nothing was confirmed, so a pair two sessions agree on is never displaced
+	// by a single sighting.
+	if len(out) == 0 {
+		for _, p := range held {
+			if allow != nil && !allow(p.Project) {
+				continue
+			}
+			// The ignore rule holds for a sighting as well as for a pair:
+			// search and `mss how` refuse the session, and `mss fix` handed
+			// back what it ran there (#3403). #2660 fixed the confirmed half;
+			// the candidates arrived after it.
+			if isIgnored(p.Project) {
+				continue
+			}
+			out = append(out, p)
+			if len(out) >= limit {
+				break
+			}
+		}
+	}
+	return out
+}
+
+// remedyIsTheFailure drops a pair whose remedy is the command that produced
+// the error. A repaired pair keeps the failing command beside the corrected
+// one, and when the two are the same command the line reads "ran next: X /
+// after this failed: X" — mss telling an agent to run again what just failed,
+// which is a loop rather than a remedy. The two strings are not equal:
+// a stored command carries its exit status, so the comparison is on the
+// command alone. Measured on a real store: 1 of the 7 served pairs that carry
+// a failing command (#3720).
+func remedyIsTheFailure(p FixPair) bool {
+	if p.Failed == "" || p.Command == "" {
+		return false
+	}
+	return normalizeCommand(p.Failed) == normalizeCommand(p.Command)
+}
+
+// remedyIsIrreversible drops a pair whose remedy cannot be taken back: a merge,
+// a deleted branch, a force push, a hard reset, a dropped stash, a recursive
+// delete, a change to a cluster. What a session did next after an error is
+// often just the next step of its own work, and when that step is one of these
+// it gets handed to an agent at the moment it is stuck. Over 396 real hints, 27
+// were such commands and 24 of them had nothing to do with the error.
+func remedyIsIrreversible(cmd string) bool {
+	for _, seg := range strings.FieldsFunc(normalizeCommand(cmd), func(r rune) bool {
+		return r == ';' || r == '|' || r == '&' || r == '\n'
+	}) {
+		w := strings.Fields(seg)
+		has := func(words ...string) bool {
+			for _, x := range words {
+				for _, y := range w {
+					if y == x {
+						return true
+					}
+				}
+			}
+			return false
+		}
+		for len(w) > 0 && (strings.Contains(w[0], "=") || w[0] == "rtk" || w[0] == "sudo") {
+			w = w[1:]
+		}
+		if len(w) < 2 {
+			continue
+		}
+		sub := ""
+		for _, y := range w[1:] {
+			if !strings.HasPrefix(y, "-") {
+				sub = y
+				break
+			}
+		}
+		switch w[0] {
+		case "git":
+			switch sub {
+			case "push":
+				if has("--delete", "-d", "--force", "-f", "--force-with-lease", "--mirror") {
+					return true
+				}
+			case "branch":
+				if has("-D", "-d", "--delete") {
+					return true
+				}
+			case "reset":
+				if has("--hard") {
+					return true
+				}
+			case "stash":
+				if has("drop", "clear") {
+					return true
+				}
+			case "clean":
+				return true
+			}
+		case "gh":
+			if has("merge", "delete", "--admin", "--delete-branch") {
+				return true
+			}
+		case "rm":
+			if has("-rf", "-fr", "-r", "-R", "--recursive") {
+				return true
+			}
+		case "kubectl", "helm":
+			if has("delete", "apply", "patch", "scale", "drain", "rollout", "uninstall", "upgrade", "install") {
+				return true
+			}
+			// Anything at all against a production namespace.
+			for _, y := range w {
+				if strings.Contains(y, "prod") {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// FixCandidateSeen reports whether mss is holding an unconfirmed sighting for
+// this error: something WAS run after it once, which is not yet evidence that
+// it worked. The command that says "nothing ran after that error" asks first,
+// so it does not deny holding what it is holding (#2282).
+func FixCandidateSeen(dir, text string, allow func(project string) bool) bool {
+	sigs := fixSignaturesFor(dir, text)
+	if len(sigs) == 0 {
+		return false
+	}
+	for _, p := range ReadFixes(dir) {
+		if !sigs[p.Sig] || !p.Candidate {
+			continue
+		}
+		// A sighting FixesFor would drop is not one a second session can
+		// promote into an answer, so it is not "waiting for a second sighting".
+		if remedyIsTheFailure(p) || remedyIsIrreversible(p.Command) {
+			continue
+		}
+		if allow != nil && !allow(p.Project) {
+			continue
+		}
+		// The same rule as FixesFor: saying mss holds a sighting it will not
+		// show is worse than saying nothing (#2660).
+		if ProjectsTouchedByIgnore(dir)[p.Project] {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// FixWithheldAsIrreversible reports whether something did run after this error
+// and every such remedy was a command FixesFor refuses to hand over — a merge,
+// a force push, a deletion. The empty answer said "no session ran a command
+// after that error", which is false exactly then: the store holds the pair and
+// mss chose not to show it.
+func FixWithheldAsIrreversible(dir, text string, allow func(project string) bool) bool {
+	sigs := fixSignaturesFor(dir, text)
+	if len(sigs) == 0 {
+		return false
+	}
+	var ignored map[string]bool
+	for _, p := range ReadFixes(dir) {
+		if !sigs[p.Sig] || !remedyIsIrreversible(p.Command) {
+			continue
+		}
+		if allow != nil && !allow(p.Project) {
+			continue
+		}
+		if ignored == nil {
+			ignored = ProjectsTouchedByIgnore(dir)
+		}
+		if ignored[p.Project] {
+			continue
+		}
+		return true
+	}
+	return false
+}

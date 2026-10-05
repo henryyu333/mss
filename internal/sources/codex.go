@@ -1,0 +1,710 @@
+package sources
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/henryyu333/mss/internal/model"
+)
+
+// CodexHome is where the Codex CLI itself keeps state; CODEX_HOME relocates
+// the whole tree (config.toml, sessions, history). Install and doctor use it.
+func CodexHome() string {
+	return EnvPath("CODEX_HOME", filepath.Join(Home(), ".codex"))
+}
+
+// CodexRoot is the session-reading root; MSS_CODEX_ROOT overrides it without
+// affecting where install writes.
+func CodexRoot() string {
+	return EnvPath("MSS_CODEX_ROOT", CodexHome())
+}
+
+// XcodeCodexRoot is the Codex store used by Xcode-hosted coding sessions.
+// Xcode writes rollout files under the same sessions layout as the Codex CLI,
+// but keeps the store beside its other CodingAssistant state.
+func XcodeCodexRoot() string {
+	return EnvPath("MSS_XCODE_CODEX_ROOT", filepath.Join(Home(), "Library", "Developer", "Xcode", "CodingAssistant", "codex"))
+}
+
+// CodexRoots returns the stores whose rollout files belong to the codex
+// harness. The primary root remains first so existing ordering and history
+// semantics remain stable. Equal configured roots are read once.
+func CodexRoots() []string {
+	var roots []string
+	for _, root := range []string{CodexRoot(), XcodeCodexRoot()} {
+		root = filepath.Clean(root)
+		seen := false
+		for _, existing := range roots {
+			if existing == root {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			roots = append(roots, root)
+		}
+	}
+	return roots
+}
+
+func LoadCodex() []model.Session {
+	roots := CodexRoots()
+	var files []string
+	for _, root := range roots {
+		for _, dir := range codexSessionDirs(root) {
+			files = append(files, walkFiles(dir, codexRolloutWanted)...)
+		}
+	}
+	files = codexOnePerSession(files)
+	ss := parseFiles(files, ParseCodexRollout)
+	// history.jsonl repeats the prompts of sessions whose rollout mss has
+	// already read, with a coarser timestamp — so the ingest de-duplicator,
+	// which keys on role+time+text, never collapses them and the same
+	// question appears twice in one session. It is only worth reading for
+	// sessions with no rollout at all.
+	seen := make(map[string]bool, len(ss))
+	for _, s := range ss {
+		seen[s.ID] = true
+	}
+	if hist, _ := ParseCodexHistory(filepath.Join(CodexRoot(), "history.jsonl")); len(hist) > 0 {
+		for _, h := range hist {
+			if !seen[h.ID] {
+				ss = append(ss, h)
+			}
+		}
+	}
+	return ss
+}
+
+// codexRolloutSuffixes are the two names one rollout can have. Codex
+// compresses a rollout once it is seven days old — `COMPRESSED_SUFFIX = ".zst"`
+// and `MIN_ROLLOUT_AGE = 7 days` in its own `rollout/src/compression.rs`, run by
+// a background worker — and reads either form through
+// `open_rollout_line_reader`, so nothing on its side changes. A matcher that
+// wants `.jsonl` alone stops seeing every session older than a week, and says
+// nothing about it: the file is not a candidate, so it is not a skip either
+// (#3640).
+var codexRolloutSuffixes = []string{".jsonl", ".jsonl.zst"}
+
+func codexRolloutWanted(p string) bool {
+	if !strings.Contains(filepath.Base(p), "rollout-") {
+		return false
+	}
+	for _, suf := range codexRolloutSuffixes {
+		if strings.HasSuffix(p, suf) {
+			return true
+		}
+	}
+	return false
+}
+
+// codexSessionDirs are the directories a rollout lives in. `archived_sessions`
+// is Codex's own `ARCHIVED_SESSIONS_SUBDIR`, beside `SESSIONS_SUBDIR`, holding
+// the same JSONL — so a session moved there left the index on the next pass.
+func codexSessionDirs(root string) []string {
+	return []string{filepath.Join(root, "sessions"), filepath.Join(root, "archived_sessions")}
+}
+
+// codexSessionID is the id the filename carries, without either suffix.
+func codexSessionID(path string) string {
+	base := strings.TrimPrefix(filepath.Base(path), "rollout-")
+	for _, suf := range codexRolloutSuffixes {
+		base = strings.TrimSuffix(base, suf)
+	}
+	return base
+}
+
+// codexCompressed reports whether this rollout needs the zstd CLI to be read.
+func codexCompressed(p string) bool { return strings.HasSuffix(p, ".jsonl.zst") }
+
+// CodexCompressedFiles lists the rollouts that need zstd, for the skip note.
+func CodexCompressedFiles() []string {
+	var out []string
+	for _, f := range CodexFiles() {
+		if codexCompressed(f) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// CodexSidecarFiles lists what a Codex store keeps beside its transcripts: the
+// plugin and app-server caches, and the configuration and credentials at the
+// root. doctor counted all of it as transcripts it could not read — 29 of them
+// on a store with 35 (#3321). Anything else, a rollout in the wrong place
+// included, stays unaccounted for, which is what the row is for.
+func CodexSidecarFiles() []string {
+	var out []string
+	for _, root := range CodexRoots() {
+		out = append(out, codexSidecarFiles(root)...)
+	}
+	return out
+}
+
+func codexSidecarFiles(root string) []string {
+	return walkFiles(root, func(p string) bool {
+		// A rollout outside sessions is unknown content and must remain visible
+		// to doctor as unrecognised rather than being silently classified away.
+		if codexRolloutWanted(p) {
+			for _, dir := range codexSessionDirs(root) {
+				if underCodexRoot(p, dir) {
+					return false
+				}
+			}
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return false
+		}
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		// The caches hold json the CLI wrote for itself. A .jsonl under them is
+		// not configuration, and swallowing it would hide a transcript restored
+		// into the wrong place, which is the one thing the row is for (review
+		// of #3321).
+		if len(parts) > 1 && (parts[0] == "plugins" || parts[0] == "cache") {
+			return strings.HasSuffix(rel, ".json")
+		}
+		// The store's own settings sit at the root, and they are named rather
+		// than matched by extension: a .json arriving there under a name mss
+		// does not know may be a transcript in a format it cannot read yet.
+		if len(parts) == 1 {
+			switch parts[0] {
+			case "version.json", "models_cache.json", "hooks.json", "auth.json", "config.json":
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// CodexFiles lists the rollout transcripts (plus history.jsonl when present)
+// without parsing them — a cheap count for diagnostics.
+func CodexFiles() []string {
+	var files []string
+	for _, root := range CodexRoots() {
+		for _, dir := range codexSessionDirs(root) {
+			files = append(files, walkFiles(dir, codexRolloutWanted)...)
+		}
+	}
+	if hist := filepath.Join(CodexRoot(), "history.jsonl"); fileExists(hist) {
+		files = append(files, hist)
+	}
+	return files
+}
+
+func underCodexRoot(path, root string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ""
+}
+
+func underAnyCodexRoot(path string) bool {
+	for _, root := range CodexRoots() {
+		if underCodexRoot(path, root) {
+			return true
+		}
+	}
+	return false
+}
+
+func underAnyCodexSessionsRoot(path string) bool {
+	for _, root := range CodexRoots() {
+		for _, dir := range codexSessionDirs(root) {
+			if underCodexRoot(path, dir) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// codexOnePerSession keeps one file per session id. Codex materializes a
+// compressed rollout back to `.jsonl` before appending to it, so both names
+// exist for the same session while that happens, and upstream's own dedup keys
+// on the session rather than on the path for the same reason. The plain file
+// wins: it is the one being written to, and reading it needs no external tool.
+func codexOnePerSession(files []string) []string {
+	best := map[string]string{}
+	order := []string{}
+	for _, f := range files {
+		id := codexSessionID(f)
+		prev, ok := best[id]
+		if !ok {
+			best[id] = f
+			order = append(order, id)
+			continue
+		}
+		if codexCompressed(prev) && !codexCompressed(f) {
+			best[id] = f
+		}
+	}
+	out := make([]string, 0, len(order))
+	for _, id := range order {
+		out = append(out, best[id])
+	}
+	return out
+}
+
+// codexRolloutIDs is the set of sessions with a rollout under root, read from
+// the file names alone: rollout-<stamp>-<uuid>.jsonl, where the uuid is the
+// session id history.jsonl names.
+func codexRolloutIDs(root string) map[string]bool {
+	const uuidLen = 36
+	ids := map[string]bool{}
+	for _, dir := range codexSessionDirs(root) {
+		for _, f := range walkFiles(dir, codexRolloutWanted) {
+			if name := codexSessionID(f); len(name) >= uuidLen {
+				ids[name[len(name)-uuidLen:]] = true
+			}
+		}
+	}
+	return ids
+}
+
+func ParseCodexHistory(path string) ([]model.Session, error) {
+	return ParseCodexHistoryFromOffset(path, 0)
+}
+
+func ParseCodexHistoryFromOffset(path string, offset int64) ([]model.Session, error) {
+	// A line whose session has a rollout repeats that rollout's prompt, a
+	// moment earlier and to the second, so nothing collapses the pair. The
+	// full build has dropped those since history.jsonl was first read; the
+	// per-file pass read the file on its own and kept them, and the session
+	// came out twice-asked and owned by the history line (#4180).
+	rollouts := codexRolloutIDs(filepath.Dir(path))
+	// One session per id, not per line: the full build keeps the row of the
+	// last session it is handed under a key, so a session of two prompts was
+	// derived from its second alone (#4449).
+	var out []model.Session
+	at := map[string]int{}
+	err := scanJSONLFromOffset(path, offset, func(m map[string]any) {
+		id, _ := m["session_id"].(string)
+		txt, _ := m["text"].(string)
+		if id == "" || txt == "" || rollouts[id] {
+			return
+		}
+		t := parseTimeAny(m["ts"])
+		i, ok := at[id]
+		if !ok {
+			i = len(out)
+			at[id] = i
+			out = append(out, model.Session{Harness: "codex", ID: id, Project: "history", Path: path})
+		}
+		out[i].Touch(t)
+		out[i].Messages = append(out[i].Messages, model.Message{Role: "user", Text: txt, Time: t})
+	})
+	return out, err
+}
+
+func ParseCodexRollout(path string) ([]model.Session, error) {
+	return ParseCodexRolloutFromOffset(path, 0)
+}
+
+func ParseCodexRolloutFromOffset(path string, offset int64) ([]model.Session, error) {
+	// A compressed rollout is read through the same scanner as a plain one, by
+	// decompressing it to a temporary file first — the pattern openclaw's
+	// archives already use, because every transcript parser here takes a path.
+	// The frame is immutable: Codex materializes a rollout back to `.jsonl`
+	// before appending, so the offset the incremental pass carries for a
+	// compressed file is a whole-file read (#3640).
+	if codexCompressed(path) {
+		plain, err := zstdToTempNamed(path, "codex")
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = os.Remove(plain) }()
+		ss, err := parseCodexRolloutPath(plain, 0, codexSessionID(path), filepath.Base(filepath.Dir(path)))
+		for i := range ss {
+			ss[i].Path = path
+		}
+		return ss, err
+	}
+	return parseCodexRolloutPath(path, offset, codexSessionID(path), filepath.Base(filepath.Dir(path)))
+}
+
+func parseCodexRolloutPath(path string, offset int64, id, project string) ([]model.Session, error) {
+	s := model.Session{Harness: "codex", ID: id, Project: project, Path: path}
+	// An appended rollout is parsed from where the last read stopped, so the
+	// session_meta line at the top is never seen again and the id falls back
+	// to the filename — which matches the real ThreadId in 0 of 28 rollouts on
+	// this machine. The session then splits in two and every further turn
+	// lands in the second half, undoing #635 for exactly the sessions someone
+	// is still talking in. One line re-read is cheaper than carrying state.
+	head := ""
+	headID := ""
+	if offset > 0 {
+		if id, cwd, payload := codexRolloutHead(path); id != "" {
+			s.ID, headID = id, id
+			s.Kind, s.Parent = codexLineage(payload)
+			if cwd != "" {
+				s.Project = projectName(cwd)
+				// And carried into the parse: a patch names its files relative
+				// to the session's directory, and the record that says which
+				// directory that is sits before the offset.
+				head = cwd
+			}
+		}
+	}
+	// An append is parsed from an offset, so the head above already settled the
+	// identity; a parent's session_meta sitting in the new bytes must not take
+	// it over (#3933).
+	ss, err := parseCodexRolloutWithScanner(s, offset > 0, head, func(fn func(map[string]any)) error {
+		return scanJSONLFromOffset(path, offset, fn)
+	})
+	// A tail with no message carries only its time (below). Without the head's
+	// id it would land on a row named after the file, which holds nothing.
+	if len(ss) == 1 && len(ss[0].Messages) == 0 && headID == "" {
+		return nil, err
+	}
+	return ss, err
+}
+
+// parseCodexRolloutWithScanner normalizes a rollout supplied by the ordinary
+// file scanner or by a bounded in-memory capture. Keeping the latter in memory
+// avoids writing raw transcript content to a temporary file on compaction.
+func parseCodexRolloutWithScanner(s model.Session, idSettled bool, knownCWD string, scan func(func(map[string]any)) error) ([]model.Session, error) {
+	// A command and its exit code arrive in separate records joined by call_id,
+	// so the command line is annotated after the fact — the same shape opencode
+	// gets for free from a column.
+	calls := map[string]int{}
+	cwd := knownCWD
+	// A fork copies the history it branched from, the parent's session_meta
+	// included, so a rollout can carry more than one identity. The first one is
+	// the file's own; the rest are inherited. Letting a later record win filed
+	// a child's turns under its parent and left the child unreachable (#3933).
+	metaSeen := idSettled
+	var events []model.Message
+	err := scan(func(m map[string]any) {
+		t := parseTimeAny(m["timestamp"])
+		s.Touch(t)
+		payload, _ := m["payload"].(map[string]any)
+		if payload == nil {
+			return
+		}
+		if typ, _ := m["type"].(string); typ == "session_meta" {
+			if metaSeen {
+				// Identity is settled, but a directory is still worth having:
+				// a patch names its files relative to it, and an append whose
+				// own head carried none would otherwise resolve them nowhere.
+				if cwd == "" {
+					cwd, _ = payload["cwd"].(string)
+				}
+				return
+			}
+			metaSeen = true
+			// The ThreadId, not the SessionId. One rollout file is one thread;
+			// a session groups every thread that branched from it, so keying on
+			// session_id merges the whole fork tree into a single mss session
+			// and every thread but one becomes unreachable. Measured by a
+			// contributor on a fork-heavy store: 811 rollouts, 811 ThreadIds,
+			// 74 SessionIds — 91% of threads collapsed (#635).
+			//
+			// payload.id equals the filename, so this agrees with the id
+			// derived above; it is set explicitly because agreeing by accident
+			// is not the same as agreeing on purpose.
+			if id, ok := payload["id"].(string); ok {
+				// Present and a string: the ThreadId, even if empty.
+				if id != "" {
+					s.ID = id
+				}
+			} else if _, present := payload["id"]; !present {
+				// Absent, not malformed. Rollouts written before Codex split
+				// the two carry only a SessionId, and without threads there is
+				// nothing to collapse: keeping it preserves the identity those
+				// sessions already have in existing indexes. A present-but-not-
+				// a-string id is a shape mss does not understand, and falling
+				// back to the SessionId there would silently reintroduce the
+				// collapse (#635) — the filename-derived id stands instead.
+				if id, _ := payload["session_id"].(string); id != "" {
+					s.ID = id
+				}
+			}
+			if c, _ := payload["cwd"].(string); c != "" {
+				cwd = c
+				s.Project = projectName(c)
+			}
+			s.Kind, s.Parent = codexLineage(payload)
+			return
+		}
+		switch pt, _ := payload["type"].(string); pt {
+		case "function_call":
+			codexCall(&s, payload, calls, t)
+			return
+		case "function_call_output", "custom_tool_call_output":
+			codexCallOutput(&s, payload, calls, t)
+			return
+		case "custom_tool_call":
+			codexPatch(&s, payload, cwd, t)
+			return
+		}
+		role, _ := payload["role"].(string)
+		if HarnessAuthored(role) {
+			return
+		}
+		txt := textFromContent(payload["content"])
+		if txt == "" {
+			if msg, _ := payload["message"].(string); msg != "" {
+				txt = msg
+				// The event stream names the speaker in its payload type, and
+				// reading it as "user" regardless stored every assistant answer
+				// a second time as something the person said: 40 mis-roled and
+				// 28 duplicated across 25 of 28 rollouts, 35% of indexed codex
+				// messages, and `--role user` returned the agent's own words.
+				if role == "" {
+					switch pt, _ := payload["type"].(string); pt {
+					case "agent_message":
+						role = "assistant"
+					default:
+						// user_message, and any shape that names no speaker:
+						// a bare message with no type has been read as the
+						// person's since the first parser, and only the agent
+						// stream was ever wrong.
+						role = "user"
+					}
+				}
+			}
+		}
+		// Collected rather than appended: a rollout that also carries roled
+		// response_items has each turn twice, and the two copies differ by
+		// microseconds so the ingest de-duplicator never collapses them.
+		// Measured on this store: all 68 event turns duplicate a response_item
+		// exactly, none is unique. Older rollouts carry only the event stream,
+		// which is why it is kept rather than skipped outright.
+		if typ, _ := m["type"].(string); typ == "event_msg" {
+			if role != "" && txt != "" {
+				events = append(events, model.Message{Role: role, Text: txt, Time: t})
+			}
+			return
+		}
+		if role != "" && txt != "" {
+			s.Messages = append(s.Messages, model.Message{Role: role, Text: txt, Time: t})
+		}
+	})
+	// Only when the roled stream said nothing: an older rollout that carries
+	// its turns as events alone still has to be readable.
+	if len(s.Messages) == 0 {
+		s.Messages = events
+	}
+	if len(s.Messages) == 0 {
+		// An appended tail of records with a time and no message, such as
+		// thread_settings_applied, still moves Updated: a full read touches
+		// every record, and returning nothing left the row behind a rebuild
+		// of the same file (#4166).
+		if idSettled && !s.Updated.IsZero() {
+			return []model.Session{s}, err
+		}
+		return nil, err
+	}
+	return []model.Session{s}, err
+}
+
+// Codex records a shell run as a function_call named exec_command whose
+// arguments are a JSON string, and its result as a separate function_call_output
+// joined by call_id. Both were read off rollouts the Codex CLI had just
+// written; an earlier note in #595 that Codex carries no exit code came from a
+// sample that happened to be all MCP calls.
+//
+// shell_command is the other shell, taking `command` where exec_command takes
+// `cmd`. Codex falls back to it whenever unified exec is off, and on those
+// setups a session read for exec_command alone had no commands (#4490).
+func codexCall(s *model.Session, payload map[string]any, calls map[string]int, t time.Time) {
+	name, _ := payload["name"].(string)
+	if name != "exec_command" && name != "shell_command" {
+		return
+	}
+	args, _ := payload["arguments"].(string)
+	var in struct {
+		Cmd     string `json:"cmd"`
+		Command string `json:"command"`
+	}
+	if json.Unmarshal([]byte(args), &in) != nil {
+		return
+	}
+	if name == "shell_command" {
+		in.Cmd = in.Command
+	}
+	if in.Cmd == "" {
+		return
+	}
+	if !IndexCommands() || !worthIndexing(in.Cmd) {
+		return
+	}
+	s.Messages = append(s.Messages, model.Message{Role: RoleCommand, Text: "$ " + in.Cmd, Time: t})
+	if id, _ := payload["call_id"].(string); id != "" {
+		calls[id] = len(s.Messages) - 1
+	}
+}
+
+// codexResumes sends a rollout back for a whole read when its tail holds the
+// failed exit of a command called before it (#4443).
+var codexResumes = resumesUnlessAnswering(`"function_call`, func(m map[string]any) ([]string, string) {
+	payload, _ := m["payload"].(map[string]any)
+	id, _ := payload["call_id"].(string)
+	switch typ, _ := payload["type"].(string); typ {
+	case "function_call":
+		return []string{id}, ""
+	case "function_call_output":
+		out, _ := payload["output"].(string)
+		if c := codexExit.FindStringSubmatch(out); c != nil && c[1] != "0" {
+			return nil, id
+		}
+	}
+	return nil, ""
+})
+
+// codexExit reads the outcome Codex prints above the output. exec_command says
+// "Process exited with code N" on every run including zero; apply_patch says
+// "Exit code: N".
+var codexExit = regexp.MustCompile(`(?m)^(?:Process exited with code|Exit code:) (\d+)`)
+
+func codexCallOutput(s *model.Session, payload map[string]any, calls map[string]int, t time.Time) {
+	out, _ := payload["output"].(string)
+	if out == "" {
+		return
+	}
+	// The id is read with the comma-ok form on purpose: a record without a
+	// call_id is not an error, and asserting it bare turns one into a panic
+	// that takes the whole parse down.
+	id, _ := payload["call_id"].(string)
+	if m := codexExit.FindStringSubmatch(out); m != nil && id != "" {
+		if code, err := strconv.Atoi(m[1]); err == nil && code > 0 {
+			if i, ok := calls[id]; ok && i < len(s.Messages) {
+				s.Messages[i].Text += fmt.Sprintf("  → exit %d", code)
+			}
+		}
+	}
+	if !IndexToolOutput() {
+		return
+	}
+	// Everything above "Output:" is Codex's own framing — a chunk id, a wall
+	// time, a token count. Keeping it would put four lines of plumbing in front
+	// of every result in the index.
+	if i := strings.Index(out, "\nOutput:\n"); i >= 0 {
+		out = out[i+len("\nOutput:\n"):]
+	}
+	if out = strings.TrimSpace(out); out == "" {
+		return
+	}
+	s.Messages = append(s.Messages, model.Message{Role: RoleToolOutput, Text: out, Time: t})
+}
+
+// codexPatchFile matches the file headers of the apply_patch format Codex uses
+// for every edit it makes; it has no Read or Edit tool of its own.
+var codexPatchFile = regexp.MustCompile(`(?m)^\*\*\* (?:Update|Add|Delete) File: (.+)$`)
+
+// codexPatch turns an apply_patch call into the files it touched and the lines
+// it removed. Paths in the patch are relative to the session's cwd.
+func codexPatch(s *model.Session, payload map[string]any, cwd string, t time.Time) {
+	if name, _ := payload["name"].(string); name != "apply_patch" {
+		return
+	}
+	body, _ := payload["input"].(string)
+	if body == "" {
+		return
+	}
+	var files []string
+	seen := map[string]bool{}
+	removed := map[string][]string{}
+	added := map[string][]string{}
+	current := ""
+	for _, line := range strings.Split(body, "\n") {
+		if m := codexPatchFile.FindStringSubmatch(line); m != nil {
+			current = resolveToolPath(strings.TrimSpace(m[1]), cwd)
+			if !seen[current] {
+				seen[current] = true
+				files = append(files, current)
+			}
+			continue
+		}
+		// A removed line, not the "--- a/x" header of a unified diff: this
+		// format has no such header, so a single leading minus is unambiguous.
+		if current != "" && strings.HasPrefix(line, "-") {
+			removed[current] = append(removed[current], strings.TrimPrefix(line, "-"))
+		}
+		// And the written side, which is what attribution needs: this format
+		// has no "+++ b/x" header either, so a single leading plus is a line
+		// the patch adds (#3773).
+		if current != "" && strings.HasPrefix(line, "+") {
+			added[current] = append(added[current], strings.TrimPrefix(line, "+"))
+		}
+	}
+	if len(files) == 0 {
+		return
+	}
+	if IndexToolPaths() {
+		s.Messages = append(s.Messages, model.Message{Role: RoleFiles, Text: strings.Join(files, "\n"), Time: t})
+	}
+	if IndexWrites() {
+		for _, f := range files {
+			if rec := WroteRecord(f, strings.Join(added[f], "\n")); rec != "" {
+				s.Messages = append(s.Messages, model.Message{Role: RoleWrote, Text: rec, Time: t})
+			}
+		}
+	}
+	if !IndexEdits() {
+		return
+	}
+	for _, f := range files {
+		span := strings.Join(removed[f], "\n")
+		if span == "" {
+			continue
+		}
+		if len(span) > editSpanMax {
+			span = span[:editSpanMax]
+		}
+		s.Messages = append(s.Messages, model.Message{Role: RoleEdit, Text: f + "\n" + span, Time: t})
+	}
+}
+
+// codexRolloutHead reads the identity a rollout declares in its first record.
+func codexRolloutHead(path string) (id, cwd string, payload map[string]any) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", "", nil
+	}
+	defer func() { _ = f.Close() }()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	// The meta record is the first line in every rollout Codex writes; a few
+	// lines of slack costs nothing and covers a format that adds a preamble.
+	for i := 0; i < 8 && sc.Scan(); i++ {
+		var rec struct {
+			Type    string         `json:"type"`
+			Payload map[string]any `json:"payload"`
+		}
+		if json.Unmarshal(sc.Bytes(), &rec) != nil || rec.Type != "session_meta" {
+			continue
+		}
+		cwd, _ = rec.Payload["cwd"].(string)
+		if id, _ = rec.Payload["id"].(string); id == "" {
+			id, _ = rec.Payload["session_id"].(string)
+		}
+		return id, cwd, rec.Payload
+	}
+	return "", "", nil
+}
+
+// codexLineage is what a rollout's own session_meta says about where the thread
+// came from. A sub-agent's names the thread that spawned it, as
+// source.subagent.thread_spawn.parent_thread_id on codex 0.149.0; recall reads
+// the edge to leave a live session's sub-agents out of it (#4547). A fork's
+// names the thread it was forked from, as forked_from_id, and a fork is not
+// told about its own source as if it were earlier work (#4549).
+func codexLineage(payload map[string]any) (kind, parent string) {
+	src, _ := payload["source"].(map[string]any)
+	sub, _ := src["subagent"].(map[string]any)
+	spawn, _ := sub["thread_spawn"].(map[string]any)
+	if p, _ := spawn["parent_thread_id"].(string); p != "" {
+		return "subagent", p
+	}
+	if p, _ := payload["forked_from_id"].(string); p != "" {
+		return "fork", p
+	}
+	return "", ""
+}

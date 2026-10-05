@@ -1,0 +1,233 @@
+package index
+
+import (
+	"crypto/sha256"
+	"encoding/binary"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/henryyu333/mss/internal/sources"
+)
+
+// Deep verification proves the index against the sources instead of trusting
+// its own bookkeeping. The category's worst failure class is a green health
+// check over silently lost memory; this is the antidote: recount, re-parse a
+// deterministic sample, and resolve a sample of postings to live records.
+// It never mutates anything — it reports drift and the command that fixes it.
+
+type DeepFinding struct {
+	Kind   string `json:"kind"` // shrunk-file, orphan-file, parse-drift, dead-posting, torn-log
+	Detail string `json:"detail"`
+}
+
+type DeepReport struct {
+	FilesChecked    int `json:"files_checked"`
+	SessionsIndexed int `json:"sessions_indexed"`
+	SampledFiles    int `json:"sampled_files"`
+	SampledPostings int `json:"sampled_postings"`
+	// Stale lists sources that changed or appeared since the last index pass.
+	// That is ordinary life between passes — `mss index` absorbs it. Only
+	// Findings mean the index disagrees with what it already claimed to hold.
+	Stale    []string      `json:"stale,omitempty"`
+	Findings []DeepFinding `json:"findings,omitempty"`
+	// Kept lists files the manifest holds that are no longer on disk while
+	// their store is: transcripts the client cleaned up, kept in the index on
+	// purpose. Not a finding — nothing is wrong with the index (#2970).
+	Kept []string `json:"kept,omitempty"`
+}
+
+func (r DeepReport) Clean() bool { return len(r.Findings) == 0 }
+
+const (
+	deepParseSample   = 5
+	deepPostingSample = 32
+)
+
+// DeepVerify compares the live index with the source stores. Sampling is
+// deterministic (path/token hashes), so repeated runs agree with each other.
+func DeepVerify(dir string) (DeepReport, error) {
+	if dir == "" {
+		dir = DefaultDir()
+	}
+	unlock, err := lockDir(dir)
+	if err != nil {
+		return DeepReport{}, err
+	}
+	defer unlock()
+	m, err := readManifest(dir)
+	if err != nil {
+		return DeepReport{}, fmt.Errorf("manifest: %w", err)
+	}
+	report := DeepReport{SessionsIndexed: len(m.Sessions)}
+
+	// 1. File inventory. New or grown files are ordinary staleness — sessions
+	// keep growing between passes. A file that shrank, or one the manifest
+	// knows but the disk lost, means the index claims memory it cannot back.
+	current := currentFiles("")
+	report.FilesChecked = len(current)
+	inSync := map[string]FileState{}
+	for p, st := range current {
+		old, ok := m.Files[p]
+		switch {
+		case !ok:
+			report.Stale = append(report.Stale, p)
+		case st.Size < old.Size:
+			report.Findings = append(report.Findings, DeepFinding{Kind: "shrunk-file", Detail: fmt.Sprintf("%s shrank from %d to %d bytes since indexing", p, old.Size, st.Size)})
+		case old.Size != st.Size || old.MTime != st.MTime:
+			report.Stale = append(report.Stale, p)
+		default:
+			inSync[p] = st
+		}
+	}
+	for p := range m.Files {
+		if _, ok := current[p]; ok {
+			continue
+		}
+		// A file that is gone from a store that is still there is the
+		// client's cleanup or a deletion by hand, including one that took the
+		// session's own directory with it (#4195), and the index keeps those
+		// on purpose (#2970) — so it is not drift, and the fix the finding
+		// prescribes, a rebuild, is exactly what would lose them. A tree that
+		// is gone whole is still reported.
+		if deletedFromLiveStore(p) {
+			report.Kept = append(report.Kept, p)
+			continue
+		}
+		report.Findings = append(report.Findings, DeepFinding{Kind: "orphan-file", Detail: p + " is in the manifest but no longer on disk"})
+	}
+	sort.Strings(report.Kept)
+	sort.Strings(report.Stale)
+
+	// 2. Parse drift: deterministically sample in-sync source files (stale
+	// ones legitimately hold more than the index), full-parse them fresh, and
+	// compare per-session message counts with the index. A record log that
+	// cannot be walked is itself the worst finding, not an abort.
+	indexedCounts, cerr := indexedMessageCounts(dir)
+	if cerr != nil {
+		report.Findings = append(report.Findings, DeepFinding{Kind: "torn-log", Detail: "records.bin unreadable: " + cerr.Error()})
+	}
+	for _, p := range samplePaths(inSync, deepParseSample) {
+		if cerr != nil {
+			break
+		}
+		kind, ok := sources.KindForPathKind(p)
+		if !ok {
+			continue
+		}
+		ss, perr := kind.Parse(p, 0)
+		if perr != nil {
+			report.Findings = append(report.Findings, DeepFinding{Kind: "parse-drift", Detail: p + ": " + perr.Error()})
+			continue
+		}
+		report.SampledFiles++
+		seen := msgSeen{}
+		for _, s := range ss {
+			key := s.Harness + ":" + s.ID
+			if _, known := m.Sessions[key]; !known {
+				report.Findings = append(report.Findings, DeepFinding{Kind: "parse-drift", Detail: key + " parses from " + p + " but is absent from the index"})
+				continue
+			}
+			// Count exactly what ingestion would keep, or the check reports
+			// drift on a healthy index and tells the reader to rebuild — which
+			// reproduces it. Two rules apply beyond dedup: a message that is
+			// empty, or that strips to empty once mss's own injected recall
+			// and harness plumbing are removed (#551), is never written.
+			want := 0
+			for _, msg := range s.Messages {
+				if strings.TrimSpace(stripSelfRecall(msg.Text)) == "" {
+					continue
+				}
+				if !seen.dup(key, msg.Role, msg.Time, msg.Text) {
+					want++
+				}
+			}
+			if got := indexedCounts[key]; got < want {
+				report.Findings = append(report.Findings, DeepFinding{Kind: "parse-drift", Detail: fmt.Sprintf("%s: source parses %d messages, index holds %d", key, want, got)})
+			}
+		}
+	}
+
+	// 3. Dead postings: a sample of tokens must resolve to readable records.
+	// Every way this section can fail to run is itself a finding: a truncated
+	// bucket makes tokenCatalog give up on the whole vocabulary, and skipping
+	// quietly meant the check reported "no memory lost" over postings it could
+	// not read at all.
+	catalog, err := tokenCatalog(dir)
+	dvTables, dvErr := loadRecordTables(dir)
+	switch {
+	case err != nil:
+		report.Findings = append(report.Findings, DeepFinding{Kind: "unreadable-postings", Detail: fmt.Sprintf("token catalog unreadable: %v", err)})
+	case dvErr != nil:
+		report.Findings = append(report.Findings, DeepFinding{Kind: "unreadable-postings", Detail: fmt.Sprintf("record tables unreadable: %v", dvErr)})
+	default:
+		f, ferr := os.Open(recordsPath(dir))
+		if ferr != nil {
+			report.Findings = append(report.Findings, DeepFinding{Kind: "unreadable-postings", Detail: fmt.Sprintf("records unreadable: %v", ferr)})
+			break
+		}
+		defer func() { _ = f.Close() }()
+		for _, tok := range sampleTokens(catalog, deepPostingSample) {
+			posts, perr := postingsFor(dir, "t"+tok)
+			if perr != nil {
+				report.Findings = append(report.Findings, DeepFinding{Kind: "unreadable-postings", Detail: fmt.Sprintf("token %q: postings unreadable: %v", tok, perr)})
+				continue
+			}
+			if len(posts) == 0 {
+				continue
+			}
+			report.SampledPostings++
+			if _, rerr := readRecordAt(f, posts[0].Off, dvTables); rerr != nil {
+				report.Findings = append(report.Findings, DeepFinding{Kind: "dead-posting", Detail: fmt.Sprintf("token %q points at unreadable record offset %d", tok, posts[0].Off)})
+			}
+		}
+	}
+	return report, nil
+}
+
+func recordsPath(dir string) string { return filepath.Join(dir, "records.bin") }
+
+// indexedMessageCounts counts records per session key straight from the log.
+func indexedMessageCounts(dir string) (map[string]int, error) {
+	counts := map[string]int{}
+	tbl, terr := loadRecordTables(dir)
+	if terr != nil {
+		return nil, terr
+	}
+	err := eachRecord(recordsPath(dir), tbl, func(r Record) {
+		counts[r.Key]++
+	})
+	return counts, err
+}
+
+func hash64(s string) uint64 {
+	h := sha256.Sum256([]byte(s))
+	return binary.BigEndian.Uint64(h[:8])
+}
+
+func samplePaths(files map[string]FileState, n int) []string {
+	paths := make([]string, 0, len(files))
+	for p := range files {
+		paths = append(paths, p)
+	}
+	sort.Slice(paths, func(i, j int) bool { return hash64(paths[i]) < hash64(paths[j]) })
+	if len(paths) > n {
+		paths = paths[:n]
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func sampleTokens(catalog map[string]bool, n int) []string {
+	toks := make([]string, 0, len(catalog))
+	for t := range catalog {
+		toks = append(toks, t)
+	}
+	sort.Slice(toks, func(i, j int) bool { return hash64(toks[i]) < hash64(toks[j]) })
+	if len(toks) > n {
+		toks = toks[:n]
+	}
+	return toks
+}

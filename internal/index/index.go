@@ -1,0 +1,1224 @@
+package index
+
+import (
+	"bufio"
+	"errors"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/henryyu333/mss/internal/model"
+)
+
+// version 12 resharded non-ASCII tokens across buckets; 13 interned the key
+// and source path of every record; 14 deflates the record payload; 15 drops
+// the derivable offset from every bucket directory entry; 16 folds Traditional
+// CJK to Simplified before keying, so an index written before it holds keys
+// this build never queries; 17 filters out mss's own injected recall, which
+// earlier builds indexed back in, so an existing index is rebuilt once to drop
+// the copies it already holds.
+// 18: file paths from tool calls are indexed (#558). An index built before this
+// has none of them, so it is rebuilt rather than reused.
+// 20: opencode tool output is parsed (#621) and each session records what it
+// tripped over (#576). An index built before this has neither, and neither can
+// be derived from what it does hold.
+// 21: Codex sessions are keyed on the ThreadId rather than the SessionId
+// (#635), so every existing Codex entry has the wrong identity, and the
+// harness preamble Codex injects as a user turn is stripped (#636).
+// 22: titles are derived by the rules from #671, #693 and #770. Those three
+// shipped without a bump, so indexes built under the old rules kept the titles
+// they derived then — incremental ingest reuses SessionMeta for a file it has
+// already read, and no ordinary `mss index` re-derives it (#784).
+// 23: the same shape again — #984 began recording an imported note's state on
+// its manifest row without a bump, so a store that imported a batch before it
+// kept a row with no state, and re-importing the batch adds nothing because it
+// is deduped. The bump is what makes the one rebuild that re-derives it happen
+// (#1049).
+// 24: tokens() now folds NFD to NFC, so postings keys for accented words change
+// shape. A store built before the fold keyed "café" decomposed; the rebuild
+// re-derives every key on the composed form so an NFC query reaches it (#1098).
+// 25: the fixes.gob and commands.gob sidecars are written only by a full
+// rebuild, so a store built before they existed answered `mss fix` with a
+// false "no session ran a command after that error" and the hook-tool command
+// line with nothing — or, once the field was added, without the per-project
+// session counts the trust policy needs. The bump forces the one rebuild that
+// mines them both.
+// 26: a session that opens with a greeting was titled "hi" — 17 rows of one
+// real 800-session store, and the turn that says what the work was sits one
+// line below (#790). Titles are part of this version for the reason 22 gives:
+// incremental ingest reuses the row it already has, so nothing re-derives them
+// without a bump.
+// 27: the marks Japanese writes inside a word — ー above all, which appears in
+// most loanwords — were not counted as CJK, so every such word was indexed as
+// two runs and the bigrams came out of the pieces. A store built before this
+// holds the split keys and a query built after it asks for the joined ones, so
+// the bump is what makes the one rebuild that re-derives them happen (#1319).
+// 28: what counts as a wall is bounded in characters rather than bytes, so a
+// line written in Russian or Chinese is held to the same length as an English
+// one. A store built before this holds fewer friction signatures, and nothing
+// re-derives them without the bump — the same shape as 22 and 23 (#1319).
+// 29: the prefixes a runner stamps on a line it did not write — pytest's `E `
+// and a leading timestamp — are stripped before a line is hashed, so one error
+// is one wall however it was printed. A store built before this holds both
+// spellings under different signatures, and nothing re-derives them without
+// the bump — the same shape as 27 and 28 (#1637).
+// 30: a long digit run inside a line — a port, a pid, an epoch, a goroutine id
+// — is masked before the line is hashed, so one failure is one wall across the
+// numbers the machine hands out. A store built before this holds each run under
+// its own signature, and nothing re-derives them without the bump — the same
+// shape as 27, 28 and 29 (#2369).
+// 31: what counts as a wall at all. A quote no longer drops a line as source
+// (#2430), a generic opening no longer hides the phrase behind it (#2432), the
+// list learned the walls a machine actually hits (#2434), a source line
+// carrying an error is not one (#2436), and the line cap went from 120 to 200
+// characters, which alone recovered a third again of what was recognised
+// (#2438). Measured over a real store: 7,053 signatures before, 8,885 after. A
+// store built under the old rules holds the old signatures and nothing
+// re-derives them — `mss friction` reads the records and sees the difference,
+// while `hook-tool-after` and the environment block read the manifest and stay
+// silent, which is the state this bump exists to end (#2444).
+// 32: goose sessions are kept unless goose says it wrote them for itself. The
+// filter was an allow-list of `session_type = 'user'`, so the ways people
+// actually reach goose — an editor over ACP, the CLI, a chat gateway, a run
+// that kept no session — were dropped. A store built under the old rules is
+// missing those sessions, and the db path only re-reads what has been touched
+// since its watermark, so without the bump they stay missing until each is
+// used again — the same shape as 21, 22 and 23 (#2873).
+// 33: a combining mark continues the word it sits on. Latin NFD was composed
+// away already, but Arabic harakat, Hebrew niqqud, Thai vowel signs and the
+// Indic matras have no precomposed form, so the mark ended the token: كَتَبَ was
+// indexed as three one-letter tokens and हिन्दी as two, and the words
+// themselves were never in the index for any query to reach. A store built
+// under the old rules holds the letters rather than the words, and nothing
+// re-derives them without the bump (#1941). A variation selector is category
+// Mn but says how to draw the rune in front of it, so it is not one of those
+// marks and does not join the word (#2896).
+// 34: Thai is indexed the way the other unspaced scripts are. Thai writes
+// without spaces between words, so a sentence was one token cut at the byte
+// cap and no query reached the words inside it; it now emits the overlapping
+// bigrams CJK has had since 21. A store built before this holds the sentences
+// and nothing re-derives the bigrams without the bump (#2897).
+//
+// The same bump carries one subtraction: a bigram of two function runes — 的了,
+// 在哪, 什么 — is grammar, the query side has dropped it from the term list
+// since it was written, and the index was storing the most frequent pairs in
+// the language for nothing. Measured on a 42 MB Chinese corpus, buckets 75.5
+// MB to 70.7 MB (#492).
+//
+// And one more subtraction on the same rebuild, because it is the same
+// rebuild: a posting's session id is written as a delta against the previous
+// posting in its block rather than in full. A block is sorted by offset and
+// records.bin is written in session order, so on a real store 99.66% of
+// postings already hold a session id no smaller than the one before them.
+// Measured here at 5.91% of buckets on a mixed store, and by two contributors
+// at 16.11% and 11.95% on theirs — none of those three is reproducible from
+// this repository, which is why the first number is the one taken on the
+// machine that merged it. The bucket magic moves with it so a reader that
+// skips the version
+// check — an index directory that cannot be locked is served without one —
+// gets errCorruptIndex rather than session ids that are wrong without saying
+// so (#492).
+//
+// 35 carries no format change at all — the parsers changed what they hand over,
+// and an index built before them keeps rows the readers would no longer write
+// (#3289). Kimi filed injections and its own hook's output under the person
+// (#3199, #3235); Roo and Cline kept the <environment_details> listing inside
+// every user turn (#3255, #3256) and yielded no tool results (#3269), no
+// command or file records (#3295); aider kept /undo and /clear as questions
+// (#3248) and its banner and continuation lines as speech (#3311); Hermes
+// stamped every session with the profile instead of the directory it was
+// worked in, and titled by whichever row came first (#3257, #3251, #3241);
+// Zed threw away every tool result it stored (#3291), inlined its summary of a
+// mentioned thread as the person's words (#3336) and gave every message one
+// stamp (#3333); Claude Code's own records — skill bodies, re-fired prompts,
+// the /fork notice — were indexed as the person's words (#3267); Qwen's tool
+// results (#3281), Grok's tool input (#3285), Antigravity's edits (#3279) and
+// plan approvals (#3326), Gemini's toolCalls (#3293), opencode's synthetic
+// parts (#3299), subagent parents (#3301) and its own session titles (#3315),
+// Copilot's injected skills (#3305) and exit codes (#3369), Cursor's per-turn
+// stamps (#3349); Crush is a new reader whose stores nothing had walked. None
+// of that reaches an existing store without a re-read, and the repo's
+// precedent for a content-changing parser fix is exactly this: #2875 for
+// goose, #1383 for the greeting rule, #2905 for the Thai bigrams.
+//
+// The same bump carries the compaction summary that titled a session: the
+// preamble introducing it is stripped before anything reads the turn, so the
+// summary read as the first thing a person said and 23 of the last 800 sessions
+// on a real store were named by it (#3439). Titles are written at ingest, so
+// those 23 keep their names until the re-read this bump already forces.
+// 36 is about what happens when something goes wrong, in two halves.
+//
+// The first is what counts as a wall at all. A shell's position marker is
+// itself the error signal, and timeouts, the harness's own tool errors and the
+// rest of the Python traceback tails join the phrase list (#3445). A session's
+// friction hashes are written into the manifest at ingest — the same shape as
+// 31 — so `mss friction` reads the records and sees the difference while the
+// hook at the failure and the environment block read the manifest and stay
+// silent. The bump is what ends that.
+//
+// The second re-mines the fix pairs. The miner asked two things of a candidate — does
+// the remedy name what the error named, did another session do the same thing —
+// and both are about words, so it missed the commonest repair there is: the
+// failing command, corrected. Counted over 2,953 failed commands, 16% are
+// followed by the same program with most of the same words and no failure,
+// against the 112 confirmed pairs the word rules mine from the same corpus.
+// Pairs are a sidecar written at build time, so an existing store keeps the
+// ones it has until the bump forces the re-read (#3445 carries the other half:
+// the errors those pairs answer).
+// 37 narrows what a second sighting proves. A red test is repaired by an edit,
+// so a bare command that followed one is the session moving on, and the same
+// routine runs the same way every day — which was enough to promote it. On a
+// real store 11 of the 360 pairs served answered a named test failure with
+// `gh pr merge 2532`, `git checkout -q -b work477` or `git status`. They are
+// sightings again, and the pairs already on file only re-mine on this bump.
+//
+// The same bump stores the failing command beside the remedy that corrects it.
+// 107 of those 360 answers share no word with the error they answer — they are
+// not a command about the error, they are the command that caused it, working —
+// and shown alone they read as an unrelated line to trust.
+//
+// Storing it showed the rule that mines them comparing the wrong thing. The
+// commands carry the shell prompt a harness stored with them, so `$` was the
+// program of both sides, the same-program test passed for any two lines and the
+// navigation guard guarded nothing: 36 of 163 such answers were a different
+// program or `cd` elsewhere. The wrapper the shell could not find is now
+// transparent too, so `timeout 12 launchctl …` is repaired by `launchctl …`.
+// 38 moves a record's role out of its compressed body. Scanning for one kind
+// of record — every command in the store, which is what `mss how` asks —
+// inflated all 280,000 records to read the 20,000 it wanted, and 53% of that
+// command's time was flate. The role is interned beside the session key now, so
+// the scan reads a prefix and skips the rest. Records are the store itself, so
+// the layout change is what forces this bump.
+//
+// 39 is the DeepSeek Harness rename. dsh writes its logs as `session.v3.jsonl`
+// now, mss matched only the older names, and #3508 taught both the discovery
+// walk and the incremental kind to accept them. Without a bump that fix reaches
+// nothing already on disk: the walk finds the new files, the manifest says the
+// store is current, and a machine with thirteen sessions keeps answering from
+// the four whose old-named logs are still there — which is what the report on
+// that pull request described, with `--rebuild` as the only way out.
+//
+// 40 files a harness's compaction summary under its own role. opencode marks
+// one on the message — `summary: true` — and mss read it as the agent talking:
+// 1,906 of them across 23 sessions on a real store, 3.97 MB of the 20.24 MB
+// indexed in those sessions, 19.6%, and 42% of the worst one. Over 60 real
+// questions none of them ever won a quoted line, so what they cost is the read
+// bound: a fifth of the text those sessions offer it is a machine's summary of
+// speech rather than the speech. The bump is what re-files the ones already
+// indexed; without it they stay assistant speech until something else forces a
+// re-read (#3384).
+//
+// 41 applies the argument-credential patterns to text already indexed. Eight of
+// twenty-four planted secret shapes were stored in the clear — a password given
+// to a program as a flag, a .netrc line, a Cookie header — and redaction runs at
+// ingest, so #3535 reaches nothing already on disk without a bump: the fix would
+// hold for the next conversation and leave every earlier one quotable, including
+// through `mss sync export`, which sends records to another machine. Every
+// earlier redaction fix shipped without one, which is why this bump is worth its
+// re-read.
+//
+// 42 masks a password handed to a program as a long flag at the length people
+// actually choose. The key-value patterns take any value of sixteen characters
+// or more, which is right where a short value is as likely to be a word and
+// wrong after `--password`, where the flag says what the value is: measured
+// through an index pass, `mysql --password=MyRootPass2026` and `app
+// --password=Pass2026Short` reached `mss show` and `mss share` in the clear.
+// Same reasoning as 41 — redaction runs at ingest, so without the bump the fix
+// holds for the next conversation and leaves every earlier one quotable
+// (#3572).
+//
+// 43 masks a secret whose value is not ASCII. Every key-value pattern ended in
+// `[A-Za-z0-9/+=._-]{16,}`, so a password written in the alphabet its owner
+// types in was stored in the clear whatever the key word: 41 widened the key
+// words to those languages and left the value class where it was. Same reason
+// as 41 and 42 — redaction runs at ingest (#3587), and the password assigned
+// with an equals sign at any length (#3588).
+//
+// 44 masks a secret handed to `--passphrase`, `--secret`, `--token` or
+// `--api-key`. 42 covered `--password` alone, so `gpg --passphrase …` and every
+// CLI flag that names an account credential went through in the clear. Same
+// reason as the three before it — redaction runs at ingest (#3596).
+//
+// 45 stores what a session settled and, per command, which session ran it last.
+// Both are derived — the older answers stay correct, which is why the redaction
+// floor does not move — and both are what the point-of-action hook had to go
+// looking for at the moment of the action: a ranking pass plus a whole-session
+// load, 133 ms against 21 ms, on the surface that fires on every action and
+// almost never on a command its session has run before. A store built before
+// this has neither, and nothing re-derives them without the bump — the same
+// shape as 22, 23 and 32 (#3001, #3605).
+//
+// 46 masks a secret written `api-key "…"` or `api key "…"`, and one assigned
+// with a colon where the value is too short for the key-value rule —
+// `x-api-key: "s3cretvalue"`. The gate in front of the quoted rule admitted
+// three of the four spellings its own pattern accepts, so which spelling a tool
+// happened to print decided whether the value was stored in the clear. Same
+// reason as 41 through 44: redaction runs at ingest (#3614).
+//
+// 47 stops masking a value whose label says it is public. The entropy pass
+// takes the word before the separator as the label, so a WireGuard dump —
+// `public key: <base64>`, one line per interface and one per peer — read as
+// `key:` and every one of those lines became `[redacted:entropy]`. Measured on
+// a 2,719-session store, that was the largest single class inside the entropy
+// tier, and none of it is a credential. This one moves in the other direction
+// from 41 through 46: a store built before it holds `[redacted:entropy]` where
+// a published key was, and only re-reading the sources brings the text back
+
+// 48 reads a Codex rollout Codex has compressed, and the sessions it has
+// archived. Codex rewrites a rollout as `rollout-*.jsonl.zst` once it is seven
+// days old and reads either name itself, so a matcher wanting `.jsonl` alone
+// stopped seeing every session older than a week — silently, since a file that
+// is not a candidate is not a skip either. `archived_sessions` is its second
+// directory, same JSONL, never walked. A store built before this holds neither,
+// and nothing re-reads a file the old rule never matched (#3640).
+// 49 masks a password stated in prose. Every other rule wants a delimiter — a
+// colon, an equals sign, a flag — and a person telling an agent a password
+// writes none: "the admin password is hunter2-2026" went into the index
+// verbatim, so `mss show` and `mss ctx` read it back in the clear. Redaction
+// runs at ingest, so a store built before this keeps the text until it
+// re-reads its sources (#3729).
+// 50 records the written side of an edit, as hashes. The replaced side answers
+// for 7.3% of committed lines because 71% of commits delete nothing at all, and
+// a line a commit added has no replaced text to match — what a session wrote is
+// the only evidence such a line was ever in a session. One 64-bit hash per
+// written line of 24 runes or more, so no new user text enters the index. A
+// store built before this has no written side until it re-reads its sources
+// (#3773).
+// 51 reads the edits Zed and Antigravity make. Zed keeps an edit on the tool
+// result rather than the call — the call holds a path and a sentence of intent —
+// so 783 spans across 29 of 30 sessions on this store were never read, and
+// Antigravity had the replaced side but not the written one. Both sides come
+// from a unified diff either way. A store built before this holds neither until
+// it re-reads its sources (#595, #3773).
+// 52 reads the written side of a Copilot Chat edit. Its store keeps each edit
+// as a range plus the text that replaced it, so the new text is there in full
+// and the old text is not there at all — 655 edit groups on this store, and
+// nothing about any of them was indexed (#595). It also records the whole-file
+// writes Copilot CLI, Cursor and Kimi dropped: each counted its replace tool as
+// an edit and its write tool as a path only, so a file created wholesale left
+// nothing to attribute from.
+// 53 labels a provider key by its provider even when it arrives as the value
+// of an assignment, which is how a key actually appears. The provider pass ran
+// after the generic key-value rules, so `GITHUB_TOKEN=ghp_…` was masked as
+// `credential` and mss could say a session had pasted something but not what.
+// Measured over the 54,269 windows holding a provider prefix in one machine's
+// transcripts: `credential` 171→49, openai-key 137→189, github-token 87→123.
+// The same values were masked before and after; a store built before this
+// keeps the old labels until it re-reads its sources (#536).
+// 54 keeps what a Claude subagent changed. Its run was cut to the task and the
+// answer, and the edit, written and file records went with the prose, so blame
+// never named the subagent that changed a file: 1,668 edits on one machine,
+// none indexed (#4163). Paths inside a Claude Code worktree were also dropped
+// as the agent's own files (#4164). A finished subagent transcript is never
+// re-read, so only a rebuild brings either in.
+//
+// 55: an interactive Codex session was owned by its history.jsonl line and
+// filed under the project "history" (#4180); the row is decided when a session
+// is written, so a rebuild.
+//
+// 56: a Claude Code session run in a directory with characters outside
+// [A-Za-z0-9] took its project from the folder name, where those characters
+// are blanked, and landed under the parent; it now reads the recorded cwd
+// (#4175). Projects are set when a transcript is read, so a rebuild.
+//
+// 57: a Cursor CLI session gains its tool results from the chat store — the
+// exit status on a command and the output it printed (#4187). A finished
+// transcript is never re-read, so a rebuild.
+//
+// 58: a Cursor CLI session takes its project from the chat's meta.json cwd;
+// the folder name blanks a dot, a space or a non-ASCII character, so those
+// were filed under a split or empty name (#4193). A rebuild.
+//
+// 59: a failed Gemini CLI command carries its exit status (#4208); a
+// finished chat file is not re-read, so a rebuild.
+//
+// 60: a resumed Gemini CLI session keeps the prompts mss's recall was
+// prepended to; Gemini's own resume history leaves them out (#4214). The
+// chat file is re-read whole only when it changes, so a rebuild.
+//
+// 60 also: Qwen Code — an `edit` or `write_file` call leaves files, wrote and
+// edit records (#4254), a failed command carries its exit status (#4255), and
+// a session in a non-ASCII directory takes its project from the recorded cwd
+// (#4258). Gemini CLI reads through the same dialect, so its `write_file`
+// leaves a wrote record too.
+//
+// 60 also: a Qwen Code or Gemini CLI shell result is indexed without the
+// report around it, so `Error: (none)` no longer reads as a failure and a fix
+// pair is stored under the error itself, not `Output: <error>` (#4256).
+//
+// 60 also: a Hermes session keeps its tool calls and results — commands,
+// files, edits and tool output (#4242).
+//
+// 60 also: a goose edit or write call leaves an edit and a wrote record, not
+// only the path (#4265).
+//
+// 60 also: a failed Kimi Code command carries its exit status (#4262).
+//
+// 60 also: an encoded project folder whose path has a "_", "." or space
+// resolves back to its directory, so sessions named from the folder (Qwen
+// Code and Claude Code without a cwd, Cursor CLI, pi, omp and the rest) get
+// the real project: `my_org/app`, not `org/app` (#4402).
+//
+// 60 also: an index that let Gemini's resume stub take a session's row lost
+// that session's records, and only a re-read brings them back (#4213); an
+// opencode reply written during a pass is read only when its session is
+// touched again (#4207). Hermes compaction copies count once (#4296).
+//
+// 60 also: a Kiro CLI session keeps its tool calls and results, which were
+// dropped as not text (#4299).
+//
+// 60 also: a Cline CLI run_commands or read_files result, written as a list of
+// per-command entries, is indexed as tool output (#4315).
+//
+// 60 also: a dsh session gains its command, files, edit and wrote records from
+// its tool/call events (#4291).
+//
+// 60 also: an Amp thread keeps its tool calls and each turn's own time
+// (#4356).
+//
+// 60 also: Antigravity commands and files come from the planner's tool_calls
+// (#4358).
+//
+// 60 also: CodeWhale's 0.9.6 read, write and edit tools leave files and edits
+// (#4360).
+//
+// 60 also: Command Code's v3 transcripts are read, turns and tool calls both
+// (#4370).
+//
+// 60 also: a Continue session gains its tool calls — commands, files, edit
+// spans, written lines and tool output from toolCallStates (#4373) — and a
+// turn is never dated after its file's mtime (#4376).
+//
+// 60 also: a Crush edit, multiedit or write carries the replaced span and the
+// written lines (#4377).
+//
+// 60 also: an aider session carries the files aider added and edited and the
+// commands it ran, and an /ask question is kept once (#4324, #4325).
+//
+// 60 also: an aider session's id is its history path and start time rather
+// than its ordinal in the file, so a new history at the path of a deleted one
+// no longer takes the kept sessions' ids (#4332).
+//
+// 60 also: a Zed thread gains the files its agent created with write_file
+// (#4339).
+//
+// 60 also: a Cherry Studio reply indexed mid-stream is read whole once it
+// finishes (#4346).
+//
+// 60 also: an omp session indexed mid-way keeps its header id instead of
+// splitting off the appended turns under the file name (#4406).
+//
+// 60 also: a CodeWhale edit_file call written with search/replace, its own
+// argument names, leaves an edit and a wrote record (#4404).
+//
+// 60 also: a Kilo CLI or ZCode session doubled in the index on each pass after
+// a write to its database (#4396); the copies already held go only on a
+// rebuild.
+//
+// 60 also: a Kimchi sub-agent run is skipped rather than indexed as a session
+// of its own (#4401); runs already held go only on a rebuild.
+//
+// 60 also: pi, omp, OpenClaw, gjc, prime, senpi and Kimchi sessions carry
+// their tool calls as files, commands and edits (#4113); a finished
+// transcript is not re-read, so a rebuild.
+//
+// 60 also: a Senpi eval cell's commands, reads and edits are indexed, and its
+// result text is unwrapped (#4425).
+//
+// 60 also: a pi, Senpi, omp, OpenClaw, gjc, prime, Kimchi or Command Code session takes its
+// project from the header's cwd as it is, not decoded from the folder (#4427).
+//
+// 60 also: a ZCode CLI session keeps its Bash, Read, Edit and Write calls
+// (#4428).
+//
+// 60 also: ZCode's legacy snapshots under ~/.zcode/v2/sessions are read, and
+// one rewritten is held once (#4432).
+//
+// 60 also: Roo and Kilo extension tasks read apply_patch, search_replace,
+// edit_file and edit calls into files, edit and wrote records (#4419).
+//
+// 60 also: a Roo or Kilo extension turn is stamped at its own ts, not at the
+// task's last activity plus N seconds (#4420).
+//
+// 60 also: the Roo and Cline "You did not use a tool" retry prompt is not
+// indexed as a user turn (#4421).
+//
+// 60 also: Roo, Kilo and legacy Cline tasks from the XML tool era read their
+// calls into command, files and edit records and their results as tool
+// output (#4424).
+//
+// 60 also: a rooted DeepSeek TUI, Codex or pi-family tool path from the other
+// OS's convention is no longer joined onto the session's cwd, a relative one
+// under a slash-rooted cwd keeps slashes on Windows, and a Roo path with one
+// leading `\` stays as written (#4438).
+//
+// 60 also: a line written while a pass ran is held once, where the pass read
+// it and the next read it again (#4442); copies already held go on a rebuild.
+//
+// 60 also: a Codex, Copilot CLI, Kimi or pi-shaped command whose result came
+// a pass after its call carries its exit, and a refused edit is dropped (#4443).
+//
+// 60 also: a Codex session known only from history.jsonl is one session per
+// id, not per line, so a full build derives it from every prompt (#4449).
+//
+// 60 also: a grok, kiro-cli or Kimi reply streamed across an index pass is
+// one message, not two (#4445).
+//
+// 60 also: a kiro-cli reply or tool call appended after a pass takes the
+// prompt's time, not 0001-01-01 (#4444).
+//
+// 60 also: a Roo, Kilo, Cline VS Code, Reasonix or Kimi session whose title or
+// workspace file changed alone is read again (#4446).
+//
+// 60 also: a ZCode snapshot restored into the CLI database leaves its turns
+// to the database's on the next pass (#4448).
+//
+// 60 also: a Cursor chat continued or renamed after a pass is read whole, so
+// its title, words, asked and touched match a rebuild (#4450, #4451).
+//
+// 60 also: codex, opencode, Kilo CLI, ZCode CLI, goose, crush, cursor, gemini,
+// kimi, grok, antigravity, amp, aider, Copilot, Copilot Chat, zed, dsh, Cline,
+// Roo, Kilo extension, Continue, CodeWhale, Kiro, Reasonix and Hermes name a
+// project by the recorded cwd's last two segments, as claude does, and decode
+// a file:// workspace first; claude and pi name a drive-root directory
+// C:\proj "proj" rather than "C:/proj" (#4457, #4458, #4461, #4462).
+//
+// 60 also: an OpenClaw <id>.trajectory.jsonl is no longer read as a session
+// (#4477).
+//
+// 60 also: a dsh log with a torn zstd frame keeps the frames around it
+// (#4294), a Cherry Studio dsh log is filed under cherrystudio alone (#4342),
+// a renamed Cline CLI session takes its new title (#4319), and a thin harness
+// title is not retaken from an appended turn (#4452); rows already held
+// change only on a rebuild.
+//
+// 60 also: a failed command carries its `→ exit N` in claude, the pi family,
+// goose, cline, kiro-cli, zed and copilot-chat, and a copilot-chat terminal
+// call its output (#4487, #4501, #4496, #4502, #4505, #4507, #4493).
+//
+// 60 also: a Claude Code PowerShell call is a command and a NotebookEdit call
+// leaves files and wrote records (#4489).
+//
+// 60 also: a codex shell_command call is a command with its exit (#4490).
+//
+// 60 also: a Copilot CLI view call leaves a files record and an apply_patch
+// call, whose arguments are the patch string, leaves files, edit and wrote
+// records (#4491).
+//
+// 60 also: a Copilot Chat copilot_readFile call leaves a files record from
+// its message uris (#4492).
+//
+// 60 also: a Gemini CLI read_many_files call leaves a files record for the
+// literal paths in include (#4494).
+//
+// 60 also: an opencode or Kilo CLI 1.x edit or write call, and a 2.x write
+// call, leaves edit and wrote records (#4495).
+//
+// 60 also: a Grok Build search_replace or write call leaves files, edit and
+// wrote records (#4497).
+//
+// 60 also: a grok-dev session in grok.db keeps its tool calls and results as
+// commands, files, edits, wrote and tool output (#4498).
+//
+// 60 also: an OpenClaw apply_patch call leaves files, edit and wrote records
+// (#4500).
+//
+// 60 also: a Cline CLI editor call leaves a wrote record of new_text, and an
+// apply_patch call files, edit and wrote records (#4503).
+//
+// 60 also: a Cline extension replace_in_file with Cline's own markers, or an
+// apply_patch under input, leaves edit and wrote records (#4504).
+//
+// 60 also: a kiro-cli --v3 or Kiro IDE tool_call record becomes commands,
+// files, edit and wrote records (#4506).
+//
+// 60 also: a Roo, Kilo Code, Continue, Amp or Antigravity command carries the
+// `→ exit N` its result reports (#4530).
+//
+// 60 also: a Crush command carries its `→ exit N`, and an edit Crush refused
+// leaves no edit or wrote records (#4532).
+//
+// 60 also: a failed ZCode Bash run carries its `→ exit N` (#4536).
+//
+// 60 also: a failed CodeWhale bash command carries its `→ exit N` (#4537).
+//
+// 60 also: a failed Command Code command carries its `→ exit N` (#4539).
+//
+// 60 also: a pi-family powershell call leaves a command record (#4523).
+//
+// 60 also: an omp or gjc edit in replace or patch mode leaves edit and wrote
+// records (#4524).
+//
+// 60 also: an omp hashline edit leaves files, edit and wrote records (#4525).
+//
+// 60 also: a prime ipython cell's details.diffs leave files, edit and wrote
+// records (#4526).
+//
+// 60 also: an Amp shell_command call is a command and an apply_patch call
+// leaves files, edit and wrote records (#4527).
+//
+// 60 also: an Antigravity write_to_file call leaves a wrote record of its
+// CodeContent once its step finishes (#4528).
+//
+// 60 also: a Continue edit_existing_file call leaves a wrote record of its
+// changes, and a canceled edit leaves none (#4529).
+//
+// 60 also: a Roo or Kilo search_and_replace call with old_string and
+// new_string leaves edit and wrote records (#4531).
+//
+// 60 also: a Roo or Kilo read_file call in the legacy files[] form leaves a
+// files record (#4531).
+//
+// 60 also: a Crush lsp_replace_symbol call leaves a wrote record of its
+// replacement (#4533).
+//
+// 60 also: a Kilo CLI background_process start or monitor is a command, and
+// notebook_read and notebook_edit leave files and wrote records (#4534).
+//
+// 60 also: a Kilo Code task's search_and_replace operations[], fast_edit_file
+// and write_file leave files, edit and wrote records, and delete_file and
+// generate_image files records (#4535).
+//
+// 60 also: a CodeWhale terminal/run or task_shell_start call is a command
+// (#4538).
+//
+// 60 also: a CodeWhale apply_patch call leaves files, edit and wrote records
+// from its unified diff or replace[] entries (#4538).
+//
+// 60 also: a Command Code shell_command with args[], powershell or
+// monitor_command call is a command, and a read_file glob is not a file
+// (#4540).
+//
+// 60 also: a Reasonix notebook_edit, delete_range, delete_symbol or move_file
+// call leaves files records, notebook_edit a wrote record and delete_range an
+// edit record from its result's diff (#4541).
+//
+// 60 also: a Grok Build `grok -p` session, which grok marks "headless", is no
+// longer stored with that as its spawn kind (#4585).
+//
+// 60 also: a Copilot Chat reply keeps the file and symbol names VS Code draws
+// inline, from its inlineReference parts (#4589).
+//
+// 60 also: a Copilot Chat agent edit reads as the edited file's name in the
+// reply, not as an empty code fence (#4590).
+//
+// 60 also: a Codex sub-agent's rollout records the thread that spawned it as
+// its parent (#4547).
+//
+// 60 also: a Codex fork records the thread it was forked from, and every
+// session keeps a fingerprint of the turn it opens with (#4549).
+//
+// 60 also: an OpenClaw 2026.7 reset or delete archive, stamped
+// 2026-10-01T15-18-21.294Z rather than with a number, is read (#4482).
+//
+// 60 also: a Codex rollout grown by records with no message moves the
+// session's updated time on an append, as a rebuild does (#4166).
+//
+// 60 also: a session whose id two files share takes its Started and Updated
+// from both, whichever sorts first (#4253).
+//
+// 60 also: a Codex rollout compressed in place, or a transcript rewritten
+// under its name in another form, is a move on an update with nothing else
+// removed; its old path and records go (#4252).
+//
+// 60 also: removing one of two transcripts that share an id re-reads the
+// other, so the runs both held stay and the row moves to it (#4310).
+//
+// 60 also: with MSS_INCLUDE_SUBAGENTS=1, Kimi Code and Qwen Code sub-agent
+// logs are read as sub-agent sessions of their parent (#4483).
+//
+// 60 also: a goose text_editor str_replace sent as a unified diff leaves edit
+// and wrote records (#4287).
+// 60 also: a session renamed to a thin title in the same pass as a new turn
+// takes the title a rebuild gives it (#4592).
+//
+// 60 also: a row shared by two files keeps the span of the one that does not
+// own it, so reading the owner again leaves Updated where a rebuild has it
+// (#4574).
+//
+// 60 also: a Crush call the user denied leaves no command, files, edit or
+// wrote record (#4575).
+//
+// 60 also: an omp patch-mode update that renames its file records the
+// written lines under the new path and both paths as files (#4576).
+//
+// 60 also: an omp patch edit with no op is the update omp reads it as, and
+// its lines are recorded (#4576).
+//
+// 60 also: a Kimi Code /btw side question is read from its fork, the
+// question and the answer without main's copied context (#4484).
+//
+// 60 also: a DeepSeek Harness session.v4.jsonl is read, in place of the older
+// log dsh leaves beside it, and a v4 error result keeps its edit out (#4600).
+//
+// 61 re-mines the fix pairs for a line the shell could not run. `== not
+// found`, `command not found` and `No module named` were answered with the
+// next file the session edited or the next thing it ran, and on one machine's
+// repeat failures 110 of 119 answers had nothing to do with the error. Such a
+// line now pairs only with itself in a form that ran, or with another program
+// doing the missing one's job; otherwise nothing is said.
+//
+// 62 masks Telegram bot tokens. Redaction runs at ingest, the same reason as
+// 41 through 46: the colon inside the token stopped every assignment rule, so
+// a store built before this holds the ones pasted in prose or assigned to a
+// variable as written.
+//
+// 63 files Claude Code's compaction summary and Gemini's state snapshot under
+// the summary role, as opencode's and Hermes's already were (#3384). Read as
+// the person's words, 41 Claude summaries supplied 191 of 622 first-hit quotes
+// on 453 real recall questions.
+//
+// 64 masks the tail of a key-value secret that ends in punctuation:
+// `--password=Sup3rS3cretValue!!xyz` was stored with `!!xyz` after the marker
+// (#4682). Redaction runs at ingest, so only a rebuild drops the tails.
+const version = 65
+
+// onDiskFormat is how the store is laid out on disk — the record encoding, the
+// bucket encoding, the manifest's own shape. It moves only when a reader of an
+// older store would mis-read it, which is rarer than version: of the last four
+// bumps, 35, 36 and 37 changed what mss derives from a transcript and left
+// every byte's meaning alone, and only 38 moved a field.
+//
+// The distinction is what a reader needs during the rebuild a bump forces. A
+// store whose content rules are stale still answers correctly under the old
+// rules; a store whose layout this build cannot read answers nothing. Measured
+// on a real machine: 8 of 56 recalls an agent actually made came back with
+// "mss is rebuilding its index for this version — ask again then", and an
+// agent does not ask again (#1733 says so about the refresh case). Three of the
+// last four upgrades could have kept answering.
+const onDiskFormat = 2
+const maxIndexedText = 256 * 1024
+
+// maxRecordSize bounds a single serialized record. A record is one message
+// (text capped at maxIndexedText) plus small metadata, so anything larger is
+// a corrupt length prefix — reject it rather than allocate up to 4 GiB.
+const maxRecordSize = 8 << 20
+
+// bucketMagic moves whenever the meaning of the bytes behind it moves. The
+// version bump above rebuilds the index on the next Ensure, but a directory
+// that cannot be locked is served as it stands, with no version check at all
+// (EnsureForSearch, EnsureForSearchNoWait) — the read-only container this
+// repo deliberately supports. Reading old posting bytes under a new rule
+// there would hand back session ids that are wrong rather than absent, and
+// nothing would say so; failing the magic check instead makes it a corrupt
+// index (#492).
+//
+// What that costs, stated because the first version of this comment said the
+// opposite: on a writable index it is a cache miss — the recovery path
+// rebuilds and the reader sees an answer. On a read-only directory it is not.
+// The rebuild cannot run, so `mss search` exits non-zero with no results
+// until the index is replaced by hand. That is the right trade against wrong
+// session ids served silently, and it is a break for anyone shipping a
+// pre-34 index inside a read-only image.
+var bucketMagic = []byte("DJB2")
+
+// errCorruptIndex marks unreadable index structures (e.g. a bucket file cut
+// short by a crash). Callers treat it as a cache miss and rebuild.
+var errCorruptIndex = errors.New("corrupt index")
+
+// IsCorrupt reports whether err means the on-disk index is damaged and a
+// rebuild will heal it.
+func IsCorrupt(err error) bool { return errors.Is(err, errCorruptIndex) }
+
+var lastIngestFiles int
+
+// HarnessCount is one harness's share of a build.
+type HarnessCount struct {
+	Name     string
+	Sessions int
+	Messages int
+}
+
+// BuildSummary describes the most recent (re)build in this process; the CLI
+// uses it to greet a first-ever index with a summary instead of silence.
+type BuildSummary struct {
+	Initial  bool
+	Sessions int
+	Messages int
+	// Dropped is how many parsed messages did not reach the index: mss's own
+	// recall blocks, stripped before anything counts them, and turns that hold
+	// nothing else. The two counts a build prints disagreed by exactly this and
+	// nothing said why (#3386).
+	Dropped    int
+	Harnesses  int
+	PerHarness []HarnessCount
+}
+
+var LastBuild BuildSummary
+
+// SuppressHarnessNarration silences the per-harness progress lines for one
+// build; the CLI sets it when it is about to greet a first index with the
+// same numbers in the summary block.
+var SuppressHarnessNarration bool
+
+type FileState struct {
+	Path          string `json:"path"`
+	Size          int64  `json:"size"`
+	MTime         int64  `json:"mtime"`
+	MetadataSize  int64  `json:"metadata_size,omitempty"`
+	MetadataMTime int64  `json:"metadata_mtime,omitempty"`
+	CWDSize       int64  `json:"cwd_size,omitempty"`
+	CWDMTime      int64  `json:"cwd_mtime,omitempty"`
+	LastUpdated   int64  `json:"last_updated,omitempty"`
+	Redactions    int    `json:"redactions,omitempty"`
+	// SafeSize is the offset just past the last complete line at index time.
+	// A session file caught mid-write ends in a torn line; parsing skips it,
+	// and the next append must resume from here or that message is lost.
+	SafeSize int64 `json:"safe_size,omitempty"`
+	// PrefixHash fingerprints the bytes up to SafeSize. Growth alone does not
+	// prove the earlier bytes are untouched: agents rewind a session by
+	// truncating and rewriting it, and once it grows past its old length that
+	// looks exactly like an append. Without this the rewritten prefix keeps
+	// its old text in the index and the new text is never read.
+	PrefixHash uint64 `json:"prefix_hash,omitempty"`
+	// PrefixSample fingerprints the same span without reading all of it: the
+	// head, the bytes just before SafeSize, and SafeSize itself. The full hash
+	// costs a read of the whole transcript on every search that finds the file
+	// changed, which on a session being written right now is every search —
+	// measured at 1.70s per call against a 250 MB transcript, growing with it.
+	//
+	// It catches what PrefixHash exists to catch. A rewind truncates and
+	// rewrites from the truncation point, so either that point is past
+	// SafeSize and the indexed bytes are genuinely untouched, or it is before
+	// it and the window ending at SafeSize falls inside the rewritten region.
+	//
+	// PrefixHash stays for manifests written before this existed; they verify
+	// the old way once, and the next walk records a sample.
+	PrefixSample uint64 `json:"prefix_sample,omitempty"`
+}
+
+type SessionMeta struct {
+	ID, Harness, Project, Path, Title string
+	Started, Updated                  time.Time
+	Ord                               uint32
+	// Asked holds hashes of the substantial questions this session opened with.
+	// Hashes rather than text: the text of six questions per session would add
+	// a third of a megabyte to a manifest that is read on every search, and the
+	// only thing a caller needs from it is whether two sessions asked the same
+	// thing. The text is recovered from the two or three sessions that matched,
+	// which is a bounded cost paid once, on a screen a person is reading.
+	Asked []uint64 `json:",omitempty"`
+	// Touched holds the few files this session worked on most, so a caller can
+	// ask about them without loading the session. Reading one back cost 130-220
+	// ms, which is not a price worth paying for a footnote under a search hit.
+	// The field is additive: a manifest written before it existed decodes with
+	// it empty and the caller degrades to saying nothing.
+	Touched []string `json:",omitempty"`
+	// Settled is what this session concluded, extracted once here for the same
+	// reason Touched is: the point-of-action hook needs it before a command
+	// runs, and finding it at that moment cost 133 ms a call against 21 ms —
+	// a ranking pass plus a whole-session load, on a surface that fires on
+	// every action (#3001, #3605). Bounded like the digest's own extraction,
+	// and additive: a manifest written before it decodes with it empty and the
+	// caller falls back to the search it used to do.
+	Settled string `json:",omitempty"`
+	// Shared marks a row that covers more than one conversation: two
+	// transcripts wrote the same harness:id, so one row holds both. The build
+	// says so once (#698); forget had no way to know, and dropping "1 session"
+	// took two conversations from two projects (#970). Additive: a manifest
+	// written before this decodes with it false.
+	Shared bool `json:",omitempty"`
+	// AgentTitle marks a title that came from the assistant's opening line
+	// because the session holds no user turn (#692). The listing printed it in
+	// the place of the reader's own question, so an assertion nobody made read
+	// like something they said (#1100). Additive: an older manifest decodes
+	// with it false, and the line then reads as it did before.
+	AgentTitle bool `json:",omitempty"`
+	// SharedStarted and SharedUpdated are the span of the files that share
+	// this row's id and do not own it, a Gemini resume stub beside its
+	// transcript. A pass that reads only the owner builds the row from that
+	// file again, and the stub's later Updated was gone until a rebuild
+	// (#4574).
+	SharedStarted time.Time `json:",omitzero"`
+	SharedUpdated time.Time `json:",omitzero"`
+	// OrigID is the id a session had on the machine it came from. Import
+	// renames every session to imported-<hash>, so a promoted note stopped
+	// looking like one the moment it crossed a machine boundary and every rule
+	// written for notes — newest correction first, the decision's state —
+	// silently stopped applying (#975). Additive: older manifests decode with
+	// it empty.
+	OrigID string `json:",omitempty"`
+	// RemoteID is the remote-control id of a Claude Code session, the one a
+	// person copies from claude.ai/code. Additive like OrigID.
+	RemoteID string `json:",omitempty"`
+	// Kind, Parent and Agent describe a session an agent spawned: the
+	// harness's own word for it, the session it was forked from, and the agent
+	// that ran it. Only filled where the harness writes the edge itself.
+	// Additive: an older manifest decodes with them empty and every surface
+	// says what it said before.
+	Kind   string `json:",omitempty"`
+	Parent string `json:",omitempty"`
+	Agent  string `json:",omitempty"`
+	// Opening identifies the turn the session opens with. A fork copies the
+	// turns it was forked from, times included, so a fork and its source open
+	// alike, and recall reads that to keep a fork's source off its page (#4549).
+	// Additive: an older manifest decodes with it zero, which matches nothing.
+	Opening uint64 `json:",omitempty"`
+	// From is the machine this session was worked on. Every imported session
+	// read as "from elsewhere" and nothing more, so with three machines
+	// exchanging history there was no way to ask what the server did, and no
+	// way to notice one of them had stopped sending. Additive: a manifest
+	// written before it existed decodes with it empty, and a batch from an
+	// older mss carries no origin, so both degrade to what they said before.
+	From string `json:",omitempty"`
+	// Lifecycle is the state of a promoted note that arrived by sync. The
+	// local states live in notes.jsonl, which the other machine does not have,
+	// so a decision retracted there read as accepted here (#975).
+	Lifecycle     string `json:",omitempty"`
+	LifecycleNote string `json:",omitempty"`
+	LifecycleAt   string `json:",omitempty"`
+	// GaveUp marks a session whose own text reports that something was tried
+	// and backed out. It is evidence, not a lifecycle state — the states are
+	// the user's judgement and stay theirs. Additive: an older manifest
+	// decodes with it false and hits print as they did before.
+	GaveUp bool `json:",omitempty"`
+	// Words is the whole session's length in words. Ranking reads back only
+	// the records that matched, so BM25 normalised by the size of the match
+	// rather than by the size of the session. Additive: a manifest written
+	// before it existed decodes with it zero and ranking falls back to what it
+	// can see.
+	Words int `json:",omitempty"`
+	// NoText marks a row whose transcript had nothing left to index once
+	// plumbing was stripped, so a transcript holding the conversation under
+	// the same id takes the row instead of being reported as a clash (#4213).
+	// Words cannot say it: a row of emoji has text and no words. Additive: an
+	// older manifest decodes with it false, the answer it always gave.
+	NoText bool `json:",omitempty"`
+	// Counted is how many of this session's messages the derived fields above
+	// already include, and LastMsg fingerprints the newest of them.
+	//
+	// A transcript grows after being indexed — the ordinary case, not an edge
+	// one — and the append path folded whatever it was handed. What it is
+	// handed differs by store: a file yields only the region appended since
+	// last time, while goose re-delivers a live session whole on every pass. A
+	// count alone cannot tell those apart, so it either lost the tail or
+	// counted the same messages again, and a session new to the index was
+	// derived twice at once (#1304). Finding LastMsg in what arrived answers
+	// it: what follows is new, and if it is not there at all, all of it is.
+	//
+	// A row written before this existed carries neither, which reads as
+	// "nothing counted" — so the first delivery after an upgrade is folded
+	// whole. That is right for the file stores, where a delivery is the
+	// appended region; a store that re-delivers a live session counts it once
+	// more and then settles, which is cheaper than a format bump that would
+	// make every user rebuild.
+	Counted int    `json:",omitempty"`
+	LastMsg uint64 `json:",omitempty"`
+	// TouchHits is how often each path in Touched was touched, in the same
+	// order. Touched is a ranking, and a ranking cannot be merged without the
+	// numbers behind it: a file touched once in a tail outranked one touched
+	// throughout, because position was all the merge had to go on.
+	TouchHits []int `json:",omitempty"`
+	// Hit holds hashes of the specific errors this session tripped over, so
+	// the first screen can name a wall the machine keeps running into without
+	// reading a single session. Same trade as Asked: the text is recovered
+	// from the two or three sessions that matched.
+	Hit []uint64 `json:",omitempty"`
+}
+
+// touchedFileCap bounds what goes in SessionMeta.Touched.
+//
+// Six was enough to say something about a session and wrong for the thing that
+// reads it: the line before an edit asks how many sessions touched this file,
+// and a session that worked on forty recorded six. Measured over 334 distinct
+// files an agent really edited on this machine, 257 of them had been touched by
+// no session at all as far as the index knew, while 268 were spoken about in
+// sessions the store holds. The surface was blind to three files in four.
+//
+// Forty, from the three points measured: files with no history 257 -> 218 -> 190
+// at 6, 20 and 40, and files the hook can speak about 26 -> 30 -> 36. It costs
+// 700 KB of a 195 MB index and 3 ms on the hook that reads it — measured on the
+// same store, where the line went from silent on 12 of 12 real edits to
+// speaking on 4.
+const touchedFileCap = 40
+
+// askedQuestionCap bounds the hashes stored per session.
+const askedQuestionCap = 8
+
+// askedMaxRunes is how long a thing someone asked can be. Beyond this it is a
+// report, a paste, or an instruction with a question buried in it.
+const askedMaxRunes = 240
+
+type Manifest struct {
+	Version int `json:"version"`
+	// Format is the on-disk layout this store was written with. Absent on a
+	// store written before the field existed, which reads as unknown: a reader
+	// that cannot tell declines rather than guessing.
+	Format   int                    `json:"format,omitempty"`
+	Files    map[string]FileState   `json:"files"`
+	Sessions map[string]SessionMeta `json:"sessions"`
+	BuiltAt  time.Time              `json:"built_at"`
+	// SourcesReadAt is when mss last walked this machine's stores. It is not
+	// BuiltAt: an import from a peer writes the manifest, and the manifest's
+	// build time with it, without looking at a single local transcript. On a
+	// machine that syncs on a timer that made every store look freshly read —
+	// `mss doctor` counts a store stale by comparing its newest file against
+	// the build time, so it reported nothing to do while local transcripts sat
+	// unread (#3747). Absent on a store written before this field, which reads
+	// as zero and falls back to BuiltAt.
+	SourcesReadAt    time.Time        `json:"sources_read_at"`
+	Generation       string           `json:"generation,omitempty"`
+	Scope            string           `json:"scope"`
+	Redacted         int              `json:"redacted"`
+	RedactionRules   map[string]int   `json:"redaction_rules,omitempty"`
+	ExportWatermarks map[string]int64 `json:"export_watermarks,omitempty"`
+	// ExportBoundary remembers which records were already sent at exactly
+	// the watermark instant, so resuming is precise even when a harness
+	// stamps a whole session with one timestamp.
+	ExportBoundary  map[string][]uint64 `json:"export_boundary,omitempty"`
+	ImportedRecords map[string]bool     `json:"imported_records,omitempty"`
+	// RecordStrings interns the keys and source paths of records.bin; a
+	// record stores an index into this table instead of repeating the
+	// strings. Append-only, so an appended log keeps resolving.
+	RecordStrings []string `json:"record_strings,omitempty"`
+	// RecordsSize is records.bin's byte length when the manifest was committed.
+	// A live index whose records.bin is shorter than this lost its tail to a
+	// torn write and must be treated as corrupt.
+	RecordsSize int64 `json:"records_size,omitempty"`
+	// BucketFiles is how many postings files buckets/ held when the manifest
+	// was committed. Losing the whole directory was already caught (#946), but
+	// a partial copy or an interrupted sync leaves some files behind rather
+	// than none, and each one that goes missing takes every result for the
+	// tokens it held — silently, with `doctor --deep` still reporting the
+	// index healthy (#1088). Additive: a manifest written before this decodes
+	// with it zero, and the check is skipped.
+	BucketFiles int `json:"bucket_files,omitempty"`
+	// IngestHealth records, per harness, what ingestion skipped on the pass
+	// that last touched it: malformed JSONL lines and files that failed to
+	// parse. Silent loss must be diagnosable (`mss doctor --json`).
+	IngestHealth map[string]HarnessIngest `json:"ingest_health,omitempty"`
+	// IngestFiles is the same story per file, and it is the one that survives:
+	// a store's counts are the sum of its files, so a pass that re-reads one
+	// transcript cannot forget what a different one could not read (#2015).
+	// Sparse — only files with something to report are in it.
+	IngestFiles map[string]FileIngest `json:"ingest_files,omitempty"`
+	// ExcludeFingerprint identifies the exclusion patterns in force when this
+	// index was built. They apply at ingest, so a pattern added later leaves
+	// what is already indexed searchable and exportable — silently, until this
+	// told `mss index` to say so (#1307). Additive: a manifest written before
+	// it decodes with it empty, and an empty one means "not recorded", which
+	// says nothing rather than guessing.
+	ExcludeFingerprint string `json:"exclude_fingerprint,omitempty"`
+	// ToolFingerprint records which external CLIs were available when this
+	// index was built. A store mss could not read for want of sqlite3 or zstd
+	// is not stale by its file state — the transcripts did not change — so
+	// installing the tool and running `mss index`, which is what doctor tells
+	// the reader to do, reported "index is up to date" and left the store out
+	// of recall (#1760). Additive like the field above: empty means "not
+	// recorded", which is what an index from an older mss carries.
+	ToolFingerprint string `json:"tool_fingerprint,omitempty"`
+}
+
+// HarnessIngest is one harness's ingestion health from its last indexing pass.
+type HarnessIngest struct {
+	MalformedLines int `json:"malformed_lines,omitempty"`
+	// ClippedMessages counts messages stored short of what the transcript
+	// holds, because a single message ran past maxIndexedText. The text is
+	// there and the tail is not, so a search over the tail answers "no
+	// matches" — the same silent loss as an unparseable line (#1093).
+	ClippedMessages int    `json:"clipped_messages,omitempty"`
+	FailedFiles     int    `json:"failed_files,omitempty"`
+	LastError       string `json:"last_error,omitempty"`
+}
+
+// FileIngest is what one file cost the last pass that read it: lines it could
+// not parse, and the error if the file itself would not open. Held per file so
+// that re-reading one transcript cannot erase what another one reported.
+type FileIngest struct {
+	Malformed int    `json:"malformed,omitempty"`
+	Error     string `json:"error,omitempty"`
+	// Clipped counts messages stored short of what this file holds. Here for
+	// the same reason as the other two: a pass that reads one transcript must
+	// not speak for what another one holds (#2022).
+	Clipped int `json:"clipped,omitempty"`
+	// ClippedSessions splits Clipped by session id. Zed keeps every thread in
+	// one threads.db, so the file's count alone put the note on every thread
+	// in it (#4340). Kept out of the JSON: the contract is the per-file count.
+	ClippedSessions map[string]int `json:"-"`
+	// Reason says why the last unusable record was skipped, for a store whose
+	// records are rows rather than lines a reader can go and look at (#4341).
+	Reason string `json:"reason,omitempty"`
+	// Unusable is those records by id. A store read from its watermark hands
+	// back only what changed, so a pass carries the rows it did not re-read
+	// instead of reporting them gone. Out of the JSON: the count is the contract.
+	Unusable map[string]string `json:"-"`
+}
+
+type manifestCore struct {
+	Version int
+	// Format: see Manifest. Written since onDiskFormat existed; absent on an
+	// older store, which reads as zero and means "cannot say".
+	Format           int
+	Files            map[string]FileState
+	BuiltAt          time.Time
+	SourcesReadAt    time.Time
+	Generation       string
+	Scope            string
+	Redacted         int
+	RedactionRules   map[string]int
+	ExportWatermarks map[string]int64
+	ExportBoundary   map[string][]uint64
+	ImportedRecords  map[string]bool
+	RecordStrings    []string
+	RecordsSize      int64
+	BucketFiles      int
+	IngestHealth     map[string]HarnessIngest
+	IngestFiles      map[string]FileIngest
+	// ExcludeFingerprint, ToolFingerprint: see Manifest.
+	ExcludeFingerprint string
+	ToolFingerprint    string
+}
+
+type RedactionStats struct {
+	Total int
+	Files map[string]int
+	Rules map[string]map[string]int
+}
+
+type Record struct {
+	Key        string
+	SourcePath string
+	Role       string
+	Text       string
+	Time       time.Time
+	LowerText  string `json:"-"`
+}
+
+type OffsetRecord struct {
+	Offset int64
+	Record Record
+}
+
+type posting struct {
+	Off int64
+	Sid uint32
+	// Tool marks a posting that came from a tool record — a command, a path, a
+	// tool result — rather than from something a person or the agent said. The
+	// bit rides in the posting because the per-session cap has to choose which
+	// postings to keep *before* any record is read, which is the whole point of
+	// the cap.
+	Tool bool
+}
+
+type SearchResult struct {
+	Sessions []model.Session
+	Fuzzy    bool
+	Stemmed  bool
+	// Neighbour says the swap came from the co-occurrence map rather than from
+	// a word form: "login" answered by "jwks" is not a spelling of it, and
+	// calling it a word form reads as a typo correction the reader did not
+	// make (#1786).
+	Neighbour bool
+	Variants  map[string][]string
+	Tier      string
+	// Total is how many sessions the tier matched before its own window
+	// trimmed them, and Capped whether that trimming withheld any. The
+	// relevance tier is the one that needs them: it ranks and truncates
+	// inside retrieval, so a caller counting Sessions is measuring the
+	// window rather than the match. Zero Total means the tier reports no
+	// figure of its own and the caller's count stands.
+	//
+	// "Matched" means different things per tier, and the number a reader sees
+	// in "showing 33 of 414" is this one. Measured on a 1,365-session store,
+	// for "what did we decide about the retry budget": 2 sessions hold every
+	// term, 819 hold at least one, and 414 cleared the relevance tier's own
+	// bar — so Total counts what the tier was willing to rank, which is why
+	// the line above it says the answer is ranked by relevance rather than
+	// matched (#2612).
+	Total  int
+	Capped bool
+	// Strict is how many of Sessions matched rather than ranked: they hold
+	// every word of the query, in the forms Variants names when the answer
+	// carries any. Only withRelevanceTail sets it: that is where
+	// a strict answer too thin to trust on its own gets the relevance
+	// ranking hung underneath it and the whole thing is labelled relevance,
+	// which the tier contract defines as nothing matched. Measured over 93
+	// two-word queries on a 2,422-session store, all 20 answers labelled
+	// relevance had a strict head of 1 to 9 sessions and none of them had
+	// matched nothing (#3815).
+	Strict int
+	// StrictIDs is which of them, keyed harness+":"+id — the order of
+	// Sessions is the merged ranking's, so the head is not the first Strict
+	// of them. A caller telling a reader what one session is needs the
+	// answer for that session, not the count.
+	StrictIDs map[string]bool `json:",omitempty"`
+	// TermIDF is what the relevance ranking judged each query term to be worth.
+	// It travels with the answer so the caller choosing which message to show
+	// can weigh the words the same way the ranking weighed the session. Without
+	// it that choice was made by counting terms, one each, and the two disagreed
+	// exactly when one rare word carried the session. Empty on every other tier.
+	TermIDF map[string]float64 `json:",omitempty"`
+}
+
+// IsStrict says whether this session holds every word of the query rather
+// than having been ranked into the answer underneath the ones that do.
+func (r SearchResult) IsStrict(s model.Session) bool {
+	return r.StrictIDs[s.Harness+":"+s.ID]
+}
+
+func DefaultDir() string {
+	if v := os.Getenv("MSS_INDEX_DIR"); v != "" {
+		return v
+	}
+	h, _ := os.UserHomeDir()
+	return filepath.Join(h, ".cache", "mss", "index.db")
+}
+
+const syncImportPath = "mss-sync-import"
+
+type importedState struct {
+	sessions   []model.Session
+	watermarks map[string]int64
+	boundary   map[string][]uint64
+	dedupe     map[string]bool
+}
+
+type tokenJob struct {
+	text   string
+	offset int64
+	sid    uint32
+	when   time.Time
+	tool   bool
+}
+
+type bucketPostings map[string]map[string][]posting
+
+// msgSeen dedupes identical messages within a session across duplicate
+// session objects in one indexing pass. Distinct messages (codex history
+// accumulation) pass through; format twins (gemini .json/.jsonl, cursor
+// multi-store composers) collapse.
+type msgSeen map[string]bool
+
+// recordWriter appends length-prefixed records through one buffer, tracking
+// the file offset in memory: the hot rebuild path used to pay a Seek syscall
+// per record, which dominated cold-rebuild profiles.
+type recordWriter struct {
+	f      *os.File
+	w      *bufio.Writer
+	off    int64
+	tables *recordTables
+}
+
+type bucketEntry struct {
+	tok string
+	off uint64
+	n   uint32
+}
+
+// LockWaitNotice is called once when a write path finds the index locked by
+// another mss and is about to wait for it. Readers never reach it — they take
+// a lock-free snapshot instead — so this is only the case where a command is
+// about to sit still for the length of someone else's build.
+var LockWaitNotice func()
+
+// noteLockWait reports the wait at most once per process, so a command that
+// takes several locks does not repeat itself.
+func noteLockWait() {
+	if LockWaitNotice == nil || lockWaitNoted {
+		return
+	}
+	lockWaitNoted = true
+	LockWaitNotice()
+}
+
+var lockWaitNoted bool

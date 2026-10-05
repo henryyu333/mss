@@ -1,0 +1,39 @@
+# Claude Code session format
+
+## Store and files
+
+Claude Code writes transcripts below `${CLAUDE_CONFIG_DIR:-~/.claude}/${CLAUDE_CODE_PROJECT_DIR_NAME:-projects}/`. mss also reads three other stores with the same JSONL format: `<config>/transcripts/`, where headless and SDK-driven clients write; `${HOME}/Library/Developer/Xcode/CodingAssistant/ClaudeAgentConfig/<projects>/`, where Xcode-hosted Claude sessions are written; and `~/.cc-mirror/<variant>/.claude/<projects>/`, the isolated variants cc-mirror runs. `MSS_XCODE_CLAUDE_ROOT` relocates the Xcode transcript root. `MSS_CLAUDE_ROOT` points session reads at one directory and remains the whole answer, so a seeded stand cannot pick up the machine's own history; `MSS_CC_MIRROR_ROOT` moves the variant base. Files are JSONL and normally named for a session ID. A project directory encodes an absolute path by replacing both separators and literal hyphens with `-`; nested `subagents/*.jsonl` files are read as the task the subagent was given and the answer it came back with; `MSS_INCLUDE_SUBAGENTS=1` takes the whole child transcript and `=0` skips them.
+
+A subagent's transcript is not a copy of its parent. The parent keeps the launch,
+the `agentId` and a summary of what came back; the child's own turns and tool
+stream exist only in the sidechain file, where every line carries
+`isSidechain: true`, the parent's `sessionId`, its own `agentId` and an
+`attributionAgent` naming which agent ran. Reading only the task, the answer and
+the files it changed by default is about index size — the reasoning and tool stream in between are
+where the volume is (#3009) — not about the work being there twice. mss indexes
+each sidechain as its own session keyed by `agentId`, with the parent recorded as its
+`parent` (#1384). Keying on `sessionId`, which the child repeats, folded the two
+together and one of them won.
+
+The top-level `~/.claude.json` is not a transcript. When `CLAUDE_CONFIG_DIR` is set, Claude moves that file to `$CLAUDE_CONFIG_DIR/.claude.json`.
+
+## Records
+
+Message records have `type`, `sessionId`, `timestamp`, and a `message` object. `message.content` is either a string or an array whose useful parts have `text` or `content`.
+
+```json
+{"type":"assistant","sessionId":"session-7","timestamp":"2026-07-17T09:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"The failing check is in parser.go."}]}}
+```
+
+`type: "user"` maps to `user` and `type: "assistant"` maps to `assistant`; a non-empty `message.role` takes precedence. Timestamps are RFC 3339 strings in observed files. mss also accepts numeric Unix seconds or milliseconds.
+
+`isMeta: true` marks a user record Claude Code wrote itself — the body of a skill it loaded, a prompt a cron job re-fired, the `/fork` notice, an `[Image: …]` placeholder, the local-command caveat. Its text is not a turn and is dropped; the record's tool calls, if it ever carries any, are read as usual. None was seen on an assistant record or carrying a tool call.
+
+## Known quirks and drift
+
+- JSONL can end in a partial line while Claude is writing. Malformed lines are skipped; a later indexing pass reads the completed tail.
+- Tool and control records use other `type` values and do not become messages.
+- Project path encoding is ambiguous because `-` represents both a separator and a hyphen. mss checks the local filesystem before using a two-segment fallback.
+- Subagent logs are read as task, answer and the files they changed by default; the full child transcript is opt-in.
+
+**Last verified:** 2026-09-10

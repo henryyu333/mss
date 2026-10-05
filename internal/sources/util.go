@@ -1,0 +1,1129 @@
+package sources
+
+import (
+	"bufio"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+	"unicode/utf8"
+
+	"github.com/henryyu333/mss/internal/model"
+)
+
+// maxParsedMessage bounds one parsed message before it reaches the index. It
+// sits well above the index's own maxIndexedText (64 KiB): redaction runs at
+// ingest on the full message before that smaller cap, so keeping more text
+// here lets a secret that straddles the 64 KiB indexed boundary be redacted
+// whole instead of losing its closing marker to an earlier cut. The stored
+// text is unchanged — ingest still caps it to 64 KiB after redacting. The cap
+// only guards memory against a pathological single message.
+const maxParsedMessage = 1 << 20
+
+// capParsedMessage bounds s to maxParsedMessage on a rune boundary. A raw byte
+// slice would split a multibyte rune and hand invalid UTF-8 to NFC folding and
+// redaction downstream.
+func capParsedMessage(s string) string {
+	if len(s) <= maxParsedMessage {
+		return s
+	}
+	cut := maxParsedMessage
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
+}
+
+type Source struct{ Name, Root string }
+
+func Home() string { h, _ := os.UserHomeDir(); return h }
+func EnvPath(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
+}
+
+func parseTimeAny(v any) time.Time {
+	switch x := v.(type) {
+	case string:
+		// The field is always a timestamp, so try the layouts a store might
+		// have written it in before giving up. RFC3339 is the common one; the
+		// rest drop a piece it treats as optional — a missing zone, missing
+		// seconds, a space where the T should be — each of which used to lose
+		// the whole date to the zero time.
+		for _, layout := range []string{
+			time.RFC3339Nano,
+			"2006-01-02T15:04:05",
+			"2006-01-02T15:04Z07:00",
+			"2006-01-02T15:04",
+			"2006-01-02 15:04:05Z07:00",
+			"2006-01-02 15:04:05",
+			// A date with no time at all. The whole stamp was lost to the zero
+			// time, so the session sorted as "-", never appeared in `mss last`
+			// and was outside every `--since` window — for the sake of a clock
+			// reading nobody has.
+			"2006-01-02",
+		} {
+			if t, err := time.Parse(layout, x); err == nil {
+				return t
+			}
+		}
+		// Some stores stringify the epoch ("1777629600", fractional or not),
+		// a bare number in a field that is always a timestamp.
+		if f, err := strconv.ParseFloat(x, 64); err == nil {
+			return unixGuess(int64(f))
+		}
+	case float64:
+		return unixGuess(int64(x))
+	case json.Number:
+		if n, err := x.Int64(); err == nil {
+			return unixGuess(n)
+		}
+		// A fractional epoch — Python's time.time() writes one — is a valid
+		// Number that Int64 rejects; without the Float64 fallback the whole
+		// turn lost its date to the zero time, and the session sorted as "-".
+		if f, err := x.Float64(); err == nil {
+			return unixGuess(int64(f))
+		}
+	}
+	return time.Time{}
+}
+
+// newerThanEpoch is the SQL for "this numeric stamp is after t", for a column
+// mss reads through unixGuess and so accepts in either unit.
+//
+// A since clause that picks one unit is wrong in one direction or the other: a
+// seconds row is below every millisecond watermark, so the store is read once
+// and then never updated again with nothing printed (#2064); a millisecond row
+// is above every seconds watermark, so the store comes back whole on every
+// pass. Comparing against both unconditionally is the second of those. The
+// split is unixGuess's own, applied to the row rather than to the watermark.
+func newerThanEpoch(expr string, t time.Time) string {
+	// Milliseconds and seconds are the two units a store writes and then
+	// filters on; a microsecond or nanosecond row is a larger number than any
+	// millisecond watermark, so it passes the first test and comes back. Over-
+	// inclusion is the safe direction here — the reader decides the date.
+	return fmt.Sprintf("(%[1]s > %[2]d or (%[1]s < %[4]d and %[1]s > %[3]d))",
+		expr, t.UnixMilli(), t.Unix(), epochMilliCutoff)
+}
+
+// The magnitudes that tell one unit from another. A moment in the 2020s is
+// about 1.7e9 seconds, 1.7e12 milliseconds, 1.7e15 microseconds and 1.7e18
+// nanoseconds, so each band holds every real stamp of its unit with three
+// decades of room either side.
+//
+// Reading anything above milliseconds AS milliseconds is what this replaces: a
+// microsecond store came back dated to the year 58136 and a nanosecond one to
+// the year 56 million, and a session dated in the future takes the top of every
+// recency surface and keeps it (#2063, #2102).
+const (
+	epochMilliCutoff = int64(1e11)
+	epochMicroCutoff = int64(1e14)
+	epochNanoCutoff  = int64(1e17)
+)
+
+// unixGuess reads a numeric stamp in whichever unit it was written in. It is
+// the front door for every store that writes a number rather than a date, so a
+// unit it cannot place is a whole harness misdated.
+func unixGuess(n int64) time.Time {
+	switch {
+	case n <= 0:
+		return time.Time{}
+	case n < epochMilliCutoff:
+		return time.Unix(n, 0)
+	case n < epochMicroCutoff:
+		return time.UnixMilli(n)
+	case n < epochNanoCutoff:
+		return time.UnixMicro(n)
+	default:
+		return time.Unix(0, n)
+	}
+}
+
+// textFromContentKind is textFromContent plus the attribution question: did
+// everything it joined come from tool results? Claude files those inside `user`
+// messages, and labelling them as speech was wrong for 89% of that role (#559).
+//
+// It joins items itself rather than delegating to textFromContent because a
+// Claude item's content is not always a string: an MCP tool's result is an
+// array of blocks with the text one level down, and the string-only read
+// dropped those. Only the Claude path reads that shape; the other harnesses
+// keep textFromContent as it was.
+func textFromContentKind(v any) (string, bool) {
+	c, ok := v.([]any)
+	if !ok {
+		return textFromContent(v), false
+	}
+	var sawTool, sawSpeech bool
+	var b strings.Builder
+	for _, it := range c {
+		m, ok := it.(map[string]any)
+		if !ok {
+			continue
+		}
+		typ, _ := m["type"].(string)
+		txt, _ := m["text"].(string)
+		if txt == "" {
+			txt = contentText(m["content"])
+		}
+		if typ == "tool_result" {
+			sawTool = true
+		} else if txt != "" {
+			sawSpeech = true
+		}
+		if txt == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(txt)
+	}
+	return b.String(), sawTool && !sawSpeech
+}
+
+// contentText is claudeContentText for the reference parser: a content field
+// holds a plain string, or an array of blocks whose text sits one level down.
+func contentText(v any) string {
+	switch c := v.(type) {
+	case string:
+		return c
+	case []any:
+		var b strings.Builder
+		for _, it := range c {
+			m, ok := it.(map[string]any)
+			if !ok {
+				continue
+			}
+			txt, _ := m["text"].(string)
+			if txt == "" {
+				continue
+			}
+			if b.Len() > 0 {
+				b.WriteByte('\n')
+			}
+			b.WriteString(txt)
+		}
+		return b.String()
+	}
+	return ""
+}
+
+func textFromContent(v any) string {
+	switch c := v.(type) {
+	case string:
+		return c
+	case []any:
+		var b strings.Builder
+		for _, it := range c {
+			if m, ok := it.(map[string]any); ok {
+				if txt, _ := m["text"].(string); txt != "" {
+					if b.Len() > 0 {
+						b.WriteByte('\n')
+					}
+					b.WriteString(txt)
+				} else if s, _ := m["content"].(string); s != "" {
+					if b.Len() > 0 {
+						b.WriteByte('\n')
+					}
+					b.WriteString(s)
+				}
+			}
+		}
+		return b.String()
+	}
+	return ""
+}
+
+// projectSegments joins the last two path segments into the name a project is
+// known by. Always with "/", because that name is an identifier rather than a
+// path on this disk: built with the OS separator it reads goprojects\mss on
+// windows and goprojects/mss everywhere else, which is two names for one
+// project. Scoping then misses on windows, and a project synced from a windows
+// machine never matches itself on any other.
+func projectSegments(parent, base string) string {
+	return parent + "/" + base
+}
+
+// projectName is the project of a directory a client recorded, named the way
+// Claude Code's is (cwdProjectName), so one directory is one project whichever
+// agent ran there. The basename made /tmp/w/my-app "my-app" for codex and
+// "w/my-app" for claude, and --project with either missed the other (#4457).
+func projectName(path string) string {
+	if name := cwdProjectName(path); name != "" {
+		return name
+	}
+	return "-"
+}
+
+func scanJSONL(path string, fn func(map[string]any)) error {
+	return scanJSONLFromOffset(path, 0, fn)
+}
+
+// scanJSONLWithHeaderFromOffset is scanJSONLFromOffset for a format whose
+// first line is metadata rather than a turn: the session's id, its title, the
+// directory it ran in. Resuming past that line left the parser with none of
+// it, so an appended turn arrived under a key made from the filename and the
+// session it belonged to never grew — measured on omp and prime, where the
+// append made a second session, and on goose and openclaw, where it renamed
+// the project (#2870).
+//
+// The header is handed over again on every resume. That is safe because it is
+// metadata: the parsers read it into fields they set rather than append to.
+func scanJSONLWithHeaderFromOffset(path string, offset int64, fn func(map[string]any)) error {
+	return scanJSONLWithHeaderFromOffsetFunc(path, offset, 1, func(map[string]any) bool { return true }, fn)
+}
+
+// scanJSONLWithHeaderFromOffsetFunc is scanJSONLWithHeaderFromOffset for a
+// format whose header need not be line 1: isHeader picks it out of the first
+// lookahead lines. omp writes a title slot before its session record, and
+// taking line 1 left an omp session split in two on every resume (#4406).
+func scanJSONLWithHeaderFromOffsetFunc(path string, offset int64, lookahead int, isHeader func(map[string]any) bool, fn func(map[string]any)) error {
+	if offset > 0 {
+		if header := leadingJSONLHeader(path, offset, lookahead, isHeader); header != nil {
+			fn(header)
+		}
+	}
+	return scanJSONLFromOffset(path, offset, fn)
+}
+
+// headerLookahead is how many leading lines may come before a header.
+const headerLookahead = 4
+
+// leadingJSONLHeader decodes the first of a JSONL file's leading lines that
+// isHeader accepts, looking no further than lookahead lines or the offset, or
+// nil when none is there.
+func leadingJSONLHeader(path string, offset int64, lookahead int, isHeader func(map[string]any) bool) map[string]any {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	r := bufio.NewReaderSize(io.LimitReader(f, offset), 1024*1024)
+	for range lookahead {
+		line, err := r.ReadBytes('\n')
+		if line = trimJSONSpace(line); len(line) > 0 {
+			var m map[string]any
+			d := json.NewDecoder(strings.NewReader(string(line)))
+			d.UseNumber()
+			if d.Decode(&m) == nil && isHeader(m) {
+				return m
+			}
+		}
+		if err != nil {
+			return nil
+		}
+	}
+	return nil
+}
+
+// readEnds is how far a read of each path may go while an index pass holds
+// it. The pass records a file's size from a stat taken before it parses, and
+// the next pass resumes from there; a parser that read on to EOF also took the
+// lines the client wrote in between, and the next pass read them again (#4442).
+var (
+	readEndsMu sync.Mutex
+	readEnds   = map[string]readEnd{}
+)
+
+// readEnd counts its holders: a pass that falls back to a rebuild holds the
+// same files again, and the inner release must not lift the outer bound.
+type readEnd struct {
+	size  int64
+	holds int
+}
+
+// LimitReads holds every transcript read of these paths to the size given
+// for each, until the returned func is called.
+func LimitReads(ends map[string]int64) (release func()) {
+	readEndsMu.Lock()
+	for p, n := range ends {
+		e := readEnds[p]
+		readEnds[p] = readEnd{size: n, holds: e.holds + 1}
+	}
+	readEndsMu.Unlock()
+	return func() {
+		readEndsMu.Lock()
+		defer readEndsMu.Unlock()
+		for p := range ends {
+			if e := readEnds[p]; e.holds > 1 {
+				e.holds--
+				readEnds[p] = e
+			} else {
+				delete(readEnds, p)
+			}
+		}
+	}
+}
+
+// boundedFrom is f read from offset, stopping at the end LimitReads holds
+// for path.
+func boundedFrom(path string, f *os.File, offset int64) io.Reader {
+	readEndsMu.Lock()
+	e, ok := readEnds[path]
+	readEndsMu.Unlock()
+	if !ok {
+		return f
+	}
+	return io.LimitReader(f, max(e.size-offset, 0))
+}
+
+func scanJSONLFromOffset(path string, offset int64, fn func(map[string]any)) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if offset > 0 {
+		if _, err := f.Seek(offset, io.SeekStart); err != nil {
+			return err
+		}
+	}
+	r := bufio.NewReaderSize(boundedFrom(path, f, offset), 1024*1024)
+	for {
+		line, err := r.ReadBytes('\n')
+		// A UTF-8 BOM on the first line would fail the JSON decode below, so the
+		// opening turn was dropped; trimJSONSpace strips it (and surrounding
+		// space) the way the claude decode path already does.
+		if line = trimJSONSpace(line); len(line) > 0 {
+			var m map[string]any
+			d := json.NewDecoder(strings.NewReader(string(line)))
+			d.UseNumber()
+			if d.Decode(&m) == nil {
+				fn(m)
+			} else if err == nil {
+				// A last line with no newline yet is the client still
+				// writing it; the next pass reads it whole (#4276).
+				diagMalformedLine(path)
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
+// keepRegular drops any path that is not a regular file. Discovery paths that
+// glob or list names (rather than walking DirEntries) use it so a FIFO or
+// socket matching the pattern cannot reach a parser's Open and block it.
+func keepRegular(paths []string) []string {
+	out := paths[:0]
+	for _, p := range paths {
+		if fi, err := os.Lstat(p); err == nil && fi.Mode().IsRegular() {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// resolvedRoot follows a store root that is itself a symlink. People keep
+// ~/.claude in a dotfiles repo, on an external disk, in a synced folder;
+// WalkDir lstats its root, so the walk saw a symlink rather than a directory
+// and descended nowhere — the store indexed nothing while every surface called
+// it found and empty (#1744). Only the root: a link inside a store is still
+// skipped, which is what keeps a FIFO from hanging the build and a link from
+// walking out of the store.
+func resolvedRoot(root string) string {
+	fi, err := os.Lstat(root)
+	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		return root
+	}
+	target, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return root
+	}
+	if st, err := os.Stat(target); err != nil || !st.IsDir() {
+		return root
+	}
+	return target
+}
+
+// walkRoot returns the directory to walk for a configured root and a function
+// putting each walked path back under that root. Walking the target is what
+// makes a symlinked store readable; reporting the configured spelling is what
+// keeps it usable, since the kind predicates test strings.HasPrefix against the
+// root and the manifest and the incremental pass key on the same string.
+func walkRoot(root string) (string, func(string) string) {
+	walked := resolvedRoot(root)
+	if walked == root {
+		return root, func(p string) string { return p }
+	}
+	return walked, func(p string) string {
+		rel, err := filepath.Rel(walked, p)
+		if err != nil {
+			return p
+		}
+		return filepath.Join(root, rel)
+	}
+}
+
+func walkFiles(root string, pred func(string) bool) []string {
+	var out []string
+	// Walk the target, report paths under the configured root: everything
+	// downstream — the kind predicates that test strings.HasPrefix against the
+	// root, the manifest, the incremental offsets — keys on the path the user
+	// configured, and handing it two spellings of one file loses the file.
+	walked, under := walkRoot(root)
+	_ = filepath.WalkDir(walked, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			// A directory the process cannot read takes its sessions out of
+			// recall. Dropping the error here left the index run with nothing
+			// to say: the only sign was a file count nobody has memorised
+			// (#816, and the ingest half of it #818).
+			if os.IsPermission(err) {
+				diagFileError(p, err)
+			}
+			return nil
+		}
+		// Only regular files. A FIFO or socket that matched the session glob
+		// hung the whole index: the parser's Open blocks on a named pipe with
+		// no writer and never returns, so one such file in a scanned store
+		// froze indexing for good. IsRegular already excludes symlinks and
+		// directories, so it subsumes the checks it replaces.
+		if q := under(p); d.Type().IsRegular() && pred(q) {
+			out = append(out, q)
+		}
+		return nil
+	})
+	return out
+}
+
+// safeParse shields the index from a panicking parser: one malformed session
+// file must cost one file, not the whole build.
+func safeParse(path string, parse func(string) ([]model.Session, error)) (ss []model.Session, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			ss, err = nil, fmt.Errorf("parser panic on %s: %v", path, r)
+		}
+	}()
+	return parse(path)
+}
+
+func parseFiles(files []string, parse func(string) ([]model.Session, error)) []model.Session {
+	files = append([]string(nil), files...)
+	sort.Strings(files)
+	type job struct {
+		i int
+		p string
+	}
+	jobs := make(chan job)
+	outs := make(chan struct {
+		i  int
+		ss []model.Session
+	})
+	var wg sync.WaitGroup
+	n := runtime.NumCPU()
+	if len(files) < n {
+		n = len(files)
+	}
+	if n == 0 {
+		return nil
+	}
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				ss, err := safeParse(j.p, parse)
+				diagFileError(j.p, err)
+				fileParsed(j.p)
+				outs <- struct {
+					i  int
+					ss []model.Session
+				}{i: j.i, ss: ss}
+			}
+		}()
+	}
+	go func() {
+		for i, f := range files {
+			jobs <- job{i: i, p: f}
+		}
+		close(jobs)
+		wg.Wait()
+		close(outs)
+	}()
+	byFile := make([][]model.Session, len(files))
+	for out := range outs {
+		byFile[out.i] = out.ss
+	}
+	var all []model.Session
+	for _, ss := range byFile {
+		all = append(all, ss...)
+	}
+	return all
+}
+
+// toolDialect names one harness's tool-call vocabulary. The wire shape is the
+// same everywhere — a `tool_use` part with a name and an input object — but the
+// vocabulary is not, and it is not guessable: Claude names the file key
+// `file_path` and its shell tool `Bash`, Cursor names them `path` and `Shell`.
+// Both were read off transcripts the vendor's own CLI had just written.
+type toolDialect struct {
+	pathKey string
+	// pathKeyAlt is a second name for the file argument, read when pathKey is
+	// absent. Roo's newer edit tools take `file_path` where its older ones take
+	// `path` (#4419). Empty means pathKey alone.
+	pathKeyAlt string
+	pathTools  map[string]bool
+	shellTool  string
+	// shellTools names every alias the shell tool answers to, when a harness
+	// has more than one. CodeWhale's canonical name is exec_shell and it also
+	// takes bash and Bash, so a run recorded under an alias was no command at
+	// all. Empty means shellTool alone.
+	shellTools map[string]bool
+	// editTools bounds which calls carry a replaced span. Empty means any call
+	// with a path and an old_string, which is how the Claude decoder has always
+	// read MultiEdit's sub-edits.
+	editTools map[string]bool
+	// oldKey names the argument holding the text an edit replaced. Copilot
+	// calls it old_str where Claude calls it old_string, and reading the wrong
+	// one loses the only record of what stopped existing. Empty means
+	// old_string.
+	oldKey string
+	// newKey names the argument holding the text an edit wrote, the mirror of
+	// oldKey: cline calls it new_text, Copilot new_str. Empty means
+	// new_string. A dialect whose key is not set records no written side —
+	// nothing wrong, just nothing to attribute from.
+	newKey string
+	// newKeyAlt is a second name for the written text, read beside newKey:
+	// Claude's NotebookEdit writes a cell under `new_source` (#4489). Empty
+	// means newKey alone.
+	newKeyAlt string
+	// editsOldKey and editsNewKey name the same two sides inside each element
+	// of an `edits` array, when they differ from oldKey and newKey: CodeWhale's
+	// edit takes edits[{oldText,newText}] while its legacy edit_file takes
+	// old_string (#4360). Empty means oldKey and newKey.
+	editsOldKey, editsNewKey string
+	// contentKey names the argument of a whole-file write. Empty means
+	// "content". A commit that adds a file has no replaced text at all, so
+	// this is the only evidence such a line was ever in a session.
+	contentKey string
+	// commandKey names the argument holding the command. Empty means
+	// "command"; cline's run_commands takes "commands", a list.
+	commandKey string
+	// commandKeyAlt is a second name for it, read when commandKey is absent:
+	// Amp's Bash takes `cmd` and its shell_command `command` (#4527). Empty
+	// means commandKey alone.
+	commandKeyAlt string
+	// argsKey names an argument list that follows the command, the way the
+	// client shows it: Command Code's shell_command {command: "go", args:
+	// ["test", "./..."]} ran `go test ./...` (#4540). Empty means none.
+	argsKey string
+	// pathListKey names an argument holding several files at once — cline's
+	// read_files takes "files", whose elements each name a path under pathKey.
+	// Empty means a call names at most one file.
+	pathListKey string
+	// pathListGlobs says that list mixes globs with paths, as gemini's
+	// read_many_files include does; a glob names no file the session
+	// touched (#4494).
+	pathListGlobs bool
+}
+
+// isShellTool reports whether a call is the shell, under any name the harness
+// gives it.
+func (d toolDialect) isShellTool(name string) bool {
+	if len(d.shellTools) > 0 {
+		return d.shellTools[name]
+	}
+	return name == d.shellTool
+}
+
+// oldSpanKey is oldKey with its default applied.
+func (d toolDialect) oldSpanKey() string {
+	if d.oldKey == "" {
+		return "old_string"
+	}
+	return d.oldKey
+}
+
+func (d toolDialect) newSpanKey() string {
+	if d.newKey == "" {
+		return "new_string"
+	}
+	return d.newKey
+}
+
+func (d toolDialect) editsOldSpanKey() string {
+	if d.editsOldKey == "" {
+		return d.oldSpanKey()
+	}
+	return d.editsOldKey
+}
+
+func (d toolDialect) editsNewSpanKey() string {
+	if d.editsNewKey == "" {
+		return d.newSpanKey()
+	}
+	return d.editsNewKey
+}
+
+func (d toolDialect) contentSpanKey() string {
+	if d.contentKey == "" {
+		return "content"
+	}
+	return d.contentKey
+}
+
+var claudeDialect = toolDialect{
+	pathKey:    "file_path",
+	pathKeyAlt: "notebook_path",
+	pathTools:  pathTools,
+	shellTools: claudeShellTools,
+	newKeyAlt:  "new_source",
+}
+
+// callPath is the file one call names, under the dialect's key or its
+// second name.
+func (d toolDialect) callPath(in map[string]any) string {
+	if p, _ := in[d.pathKey].(string); p != "" {
+		return p
+	}
+	if d.pathKeyAlt == "" {
+		return ""
+	}
+	p, _ := in[d.pathKeyAlt].(string)
+	return p
+}
+
+func toolPart(it any, d toolDialect) (name string, in map[string]any, ok bool) {
+	m, ok := it.(map[string]any)
+	if !ok {
+		return "", nil, false
+	}
+	if t, _ := m["type"].(string); t != "tool_use" {
+		return "", nil, false
+	}
+	name, _ = m["name"].(string)
+	in, _ = m["input"].(map[string]any)
+	return name, in, in != nil
+}
+
+// toolPathsFromContent is claudeToolPaths for the reference parser, which walks
+// decoded maps rather than raw JSON. The two must agree or the differential
+// test in #502 stops meaning anything.
+func toolPathsFromContent(v any) string { return toolPathsIn(v, claudeDialect) }
+
+func toolPathsIn(v any, d toolDialect) string {
+	items, ok := v.([]any)
+	if !ok {
+		return ""
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, it := range items {
+		name, in, ok := toolPart(it, d)
+		if !ok || !d.pathTools[name] {
+			continue
+		}
+		for _, p := range toolPathStrings(in, d) {
+			// The record is one path per line and the index splits it back on
+			// the newline, so a path carrying one arrives as two files the
+			// session never touched — which reaches the files listing, blame,
+			// and the project a session is filed under (#2042).
+			if seen[p] || strings.ContainsAny(p, "\n\r") {
+				continue
+			}
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// toolPathStrings pulls the paths out of one call. A call can name one file
+// under the dialect's key, or carry a list of read requests — cline's
+// read_files takes `files`, an array whose elements each name a path — and
+// reading only the scalar key indexed none of those.
+func toolPathStrings(in map[string]any, d toolDialect) []string {
+	if p := d.callPath(in); p != "" {
+		return []string{p}
+	}
+	if d.pathListKey == "" {
+		return nil
+	}
+	items, _ := in[d.pathListKey].([]any)
+	var out []string
+	for _, it := range items {
+		switch e := it.(type) {
+		case string:
+			if e != "" && (!d.pathListGlobs || !strings.ContainsAny(e, "*?[{")) {
+				out = append(out, e)
+			}
+		case map[string]any:
+			if p, _ := e[d.pathKey].(string); p != "" {
+				out = append(out, p)
+			}
+		}
+	}
+	return out
+}
+
+// editSpansFromContent is claudeEditSpans for the reference parser.
+func editSpansFromContent(v any) []string { return editSpansIn(v, claudeDialect) }
+
+func editSpansIn(v any, d toolDialect) []string {
+	items, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, it := range items {
+		name, in, ok := toolPart(it, d)
+		if !ok {
+			continue
+		}
+		if len(d.editTools) > 0 && !d.editTools[name] {
+			continue
+		}
+		path := d.callPath(in)
+		if path == "" {
+			continue
+		}
+		// The record is "path\nspan" and restore splits it on the first
+		// newline, so a path carrying one puts the rest of itself at the head
+		// of the span — handed back as the exact bytes that stopped existing
+		// (#2042). The format cannot hold such a path, so the span is not
+		// recorded rather than recorded wrong.
+		if strings.ContainsAny(path, "\n\r") {
+			continue
+		}
+		old, _ := in[d.oldSpanKey()].(string)
+		spans := []string{old}
+		if edits, ok := in["edits"].([]any); ok {
+			for _, e := range edits {
+				em, ok := e.(map[string]any)
+				if !ok {
+					continue
+				}
+				o, _ := em[d.editsOldSpanKey()].(string)
+				spans = append(spans, o)
+			}
+		}
+		for _, span := range spans {
+			if span == "" {
+				continue
+			}
+			if len(span) > editSpanMax {
+				span = span[:editSpanMax]
+			}
+			out = append(out, path+"\n"+span)
+		}
+	}
+	return out
+}
+
+// wroteRecordsFromContent is claudeWroteRecords for the reference parser: the
+// written side of the same calls editSpansIn reads the replaced side of.
+func wroteRecordsFromContent(v any) []string { return wroteRecordsIn(v, claudeDialect) }
+
+func wroteRecordsIn(v any, d toolDialect) []string {
+	items, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, it := range items {
+		name, in, ok := toolPart(it, d)
+		if !ok {
+			continue
+		}
+		if len(d.editTools) > 0 && !d.editTools[name] {
+			continue
+		}
+		path := d.callPath(in)
+		if path == "" {
+			continue
+		}
+		newText, _ := in[d.newSpanKey()].(string)
+		content, _ := in[d.contentSpanKey()].(string)
+		written := []string{newText, content}
+		// A NotebookEdit delete carries new_source and writes none of it.
+		if mode, _ := in["edit_mode"].(string); d.newKeyAlt != "" && mode != "delete" {
+			alt, _ := in[d.newKeyAlt].(string)
+			written = append(written, alt)
+		}
+		if edits, ok := in["edits"].([]any); ok {
+			for _, e := range edits {
+				em, ok := e.(map[string]any)
+				if !ok {
+					continue
+				}
+				n, _ := em[d.editsNewSpanKey()].(string)
+				written = append(written, n)
+			}
+		}
+		for _, w := range written {
+			if rec := WroteRecord(path, w); rec != "" {
+				out = append(out, rec)
+			}
+		}
+	}
+	return out
+}
+
+// commandsFromContent is claudeCommands for the reference parser.
+func commandsFromContent(v any) []string { return commandsIn(v, claudeDialect) }
+
+// commandCallsFromContent is commandsFromContent with the call id each command
+// will be answered under, so the reference parser can stamp an outcome the same
+// way the typed one does. The two must agree or the differential test in #502
+// stops meaning anything.
+func commandCallsFromContent(v any) []claudeCommand { return commandCallsIn(v, claudeDialect) }
+
+// toolOutcomesFromContent is claudeToolOutcomes for the reference parser.
+func toolOutcomesFromContent(v any) []claudeToolOutcome {
+	items, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	var out []claudeToolOutcome
+	for _, it := range items {
+		m, ok := it.(map[string]any)
+		if !ok {
+			continue
+		}
+		if t, _ := m["type"].(string); t != "tool_result" {
+			continue
+		}
+		id, _ := m["tool_use_id"].(string)
+		if id == "" {
+			continue
+		}
+		bad, _ := m["is_error"].(bool)
+		out = append(out, claudeOutcome(id, bad, m["content"]))
+	}
+	return out
+}
+
+func commandsIn(v any, d toolDialect) []string {
+	items, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, it := range items {
+		name, in, ok := toolPart(it, d)
+		if !ok || !d.isShellTool(name) {
+			continue
+		}
+		// One call can carry a list rather than a single command: cline's
+		// run_commands takes `commands`, an array of complete shell strings.
+		// Reading only the singular key indexed none of them.
+		for _, cmd := range commandStrings(in, d) {
+			if !worthIndexing(cmd) {
+				continue
+			}
+			out = append(out, "$ "+cmd)
+		}
+	}
+	return out
+}
+
+// commandStrings pulls the commands out of one call, singular or plural.
+func commandStrings(in map[string]any, d toolDialect) []string {
+	key := d.commandKey
+	if key == "" {
+		key = "command"
+	}
+	if _, ok := in[key]; !ok && d.commandKeyAlt != "" {
+		key = d.commandKeyAlt
+	}
+	switch v := in[key].(type) {
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return nil
+		}
+		if d.argsKey != "" {
+			v += CommandArgs(in[d.argsKey])
+		}
+		return []string{v}
+	case []any:
+		var out []string
+		for _, it := range v {
+			s, _ := it.(string)
+			if strings.TrimSpace(s) == "" {
+				continue
+			}
+			out = append(out, s)
+		}
+		return out
+	}
+	return nil
+}
+
+// CommandArgs is an argument list as the suffix it puts on a command line,
+// " a b", read as Command Code's formatArgsSuffix shows it: a list joined by
+// spaces, or a string as it is. The tool hooks read the same arguments.
+func CommandArgs(v any) string {
+	switch a := v.(type) {
+	case string:
+		if a != "" {
+			return " " + a
+		}
+	case []any:
+		var parts []string
+		for _, it := range a {
+			if s, ok := it.(string); ok {
+				parts = append(parts, s)
+			}
+		}
+		if len(parts) > 0 {
+			return " " + strings.Join(parts, " ")
+		}
+	}
+	return ""
+}
+
+// HarnessAuthored reports whether a role marks text the harness wrote to the
+// model rather than anything a person or the assistant said.
+//
+// #551 removed the Claude-side markers and asked for one place that recognises
+// harness-injected wrappers across parsers instead of a list per parser. This
+// is that place, and Codex is why it now exists: its preamble is not a string
+// to add to a list, it is a whole role. Measured on one store — 28 of 28
+// sessions took their title from it — and on a contributor's, 81 of 82 (#636).
+//
+// It is dropped rather than stored under an ignored role: the text is
+// identical in every session, so it is not memory, and it is lexically broad
+// enough to outrank real turns on aggregate match count.
+func HarnessAuthored(role string) bool {
+	return role == "developer" || role == "system"
+}
+
+// truncateRunes cuts a string to at most n bytes without splitting a character.
+// Callers store or display the result, so a broken byte survives far past the
+// cut that made it.
+func truncateRunes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.ValidString(s[:n]) {
+		n--
+	}
+	return s[:n]
+}
+
+// millisecondBackoff formats a watermark for a clause that compares through
+// strftime's %f. That is milliseconds, and the readers parse nanoseconds, so a
+// message inside the watermark's own millisecond compares as not after it — and
+// the two sides disagree about which millisecond a stamp is in at all, because
+// Go truncates here where strftime rounds. Backing the watermark off by a
+// millisecond puts the error on the side that costs a message being offered
+// twice rather than the side that skips it for good (#2155).
+func millisecondBackoff(t time.Time) string {
+	return t.UTC().Add(-time.Millisecond).Format("2006-01-02T15:04:05.000")
+}
+
+// OnFileParsed is called with each transcript path as it finishes parsing, so
+// a caller drawing progress can move per file rather than per store. The index
+// sets it for a cold rebuild: every file-based store parses through the pool
+// above, and one store holding most of the corpus used to leave the bar at 0%
+// until it finished — measured, ten seconds of a thirty-second rebuild (#3372).
+//
+// Set before the parse and cleared after; nil means nobody is watching. It is
+// called from the pool's workers, so an implementation has to be safe to call
+// from several goroutines at once.
+var OnFileParsed func(path string)
+
+// SetFileProgress installs the callback and returns a function that restores
+// what was there. The mutex covers the swap, not the call: parsing runs long
+// after this returns.
+func SetFileProgress(fn func(path string)) func() {
+	fileProgressMu.Lock()
+	prev := OnFileParsed
+	OnFileParsed = fn
+	fileProgressMu.Unlock()
+	return func() {
+		fileProgressMu.Lock()
+		OnFileParsed = prev
+		fileProgressMu.Unlock()
+	}
+}
+
+var fileProgressMu sync.Mutex
+
+func fileParsed(path string) {
+	fileProgressMu.Lock()
+	fn := OnFileParsed
+	fileProgressMu.Unlock()
+	if fn != nil {
+		fn(path)
+	}
+}
+
+// isAbsolutePath accepts both conventions, not the host's. A synced store
+// holds whatever the machine that wrote it used. A leading `\` is rooted too:
+// Windows reads \tmp\x against the current drive, never against a cwd.
+func isAbsolutePath(p string) bool {
+	if strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) {
+		return true
+	}
+	// C:\src or C:/src
+	return len(p) > 2 && p[1] == ':' && (p[2] == '\\' || p[2] == '/')
+}
+
+// resolveToolPath puts a tool call's path relative to the session's cwd onto
+// that cwd, and leaves a rooted one as written. filepath.IsAbs is the host's
+// rule, and on Windows it is false for /tmp/proj/retry.go, which then became
+// \tmp\proj\tmp\proj\retry.go (#4438). A slash-rooted cwd is joined with
+// slashes so the record reads the same whichever host indexed it.
+func resolveToolPath(p, cwd string) string {
+	if p == "" || cwd == "" || isAbsolutePath(p) {
+		return p
+	}
+	if strings.HasPrefix(cwd, "/") {
+		return path.Join(cwd, p)
+	}
+	return filepath.Join(cwd, p)
+}
+
+// expandTilde resolves ~ against the home directory.
+func expandTilde(p string) string {
+	if p == "~" {
+		return Home()
+	}
+	if strings.HasPrefix(p, "~/") || strings.HasPrefix(p, `~\`) {
+		return filepath.Join(Home(), p[2:])
+	}
+	return p
+}
+
+// zstdToTempNamed decodes a zstd-framed transcript to a temp file and returns
+// its name; the caller removes it.
+func zstdToTempNamed(path, harness string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	out, err := zstdDecodeFile(path, harness, raw)
+	if err != nil {
+		return "", err
+	}
+	f, err := os.CreateTemp("", "mss-"+harness+"-*.jsonl")
+	if err != nil {
+		return "", err
+	}
+	if _, err := f.Write(out); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(f.Name())
+		return "", err
+	}
+	return f.Name(), nil
+}
