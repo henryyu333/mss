@@ -702,7 +702,7 @@ const maxRecordSize = 8 << 20
 // bucketMagic moves whenever the meaning of the bytes behind it moves. The
 // version bump above rebuilds the index on the next Ensure, but a directory
 // that cannot be locked is served as it stands, with no version check at all
-// (EnsureForSearch, EnsureForSearchNoWait) — the read-only container this
+// (EnsureForSearch) — the read-only container this
 // repo deliberately supports. Reading old posting bytes under a new rule
 // there would hand back session ids that are wrong rather than absent, and
 // nothing would say so; failing the magic check instead makes it a corrupt

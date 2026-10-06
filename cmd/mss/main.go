@@ -1066,11 +1066,19 @@ func searchWithOptions(dir string, args []string, sourceInstance string, bare bo
 			continue
 		}
 		if strings.HasPrefix(a, "--exclude=") {
-			excludeIDs = append(excludeIDs, strings.TrimPrefix(a, "--exclude="))
+			v := strings.TrimPrefix(a, "--exclude=")
+			if strings.TrimSpace(v) == "" {
+				return fmt.Errorf("--exclude needs value")
+			}
+			excludeIDs = append(excludeIDs, v)
 			continue
 		}
 		if strings.HasPrefix(a, "--exclude-self=") {
-			excludeSelf = strings.TrimPrefix(a, "--exclude-self=")
+			v := strings.TrimPrefix(a, "--exclude-self=")
+			if strings.TrimSpace(v) == "" {
+				return fmt.Errorf("--exclude-self needs value")
+			}
+			excludeSelf = v
 			continue
 		}
 		if a == "--exclude" || a == "--exclude-self" {
@@ -1287,11 +1295,18 @@ func searchWithOptions(dir string, args []string, sourceInstance string, bare bo
 		// the transcript itself. The same filtering and policy applied to
 		// the hits applies to the list, so nothing excluded or denied leaks
 		// back in by taking the other door.
-		matchIdx, err := sessionsMatchIndices(dir, ss, o, result)
+		listed, listCapped, listTotal := orderSessionsForList(dir, ss, hits, o, result)
+		matchIdx, err := sessionsMatchIndices(dir, listed, o, result)
 		if err != nil {
 			return err
 		}
-		return printSessionsJSON(os.Stdout, ss, matchIdx, o)
+		if err := printSessionsJSON(os.Stdout, listed, matchIdx, o, listCapped, listTotal); err != nil {
+			return err
+		}
+		if mistyped {
+			return errAlreadySaid
+		}
+		return nil
 	}
 	// The window this is being printed into, so the lines can be budgeted
 	// rather than assumed 80 wide. Only for a terminal: a pipe gets the whole
@@ -3220,7 +3235,12 @@ func capTierHits(hits []search.Hit, o search.Options) ([]search.Hit, bool) {
 // selfFound says whether the nonce matched anything; a miss is reported as
 // coverage, not an error — the session asking may simply not be indexed yet.
 func resolveSearchExcludes(dir string, ids []string, nonce string) (map[string]bool, bool, error) {
-	byPrefix := index.SessionIDsByPrefix(dir, ids)
+	byPrefix, err := index.SessionIDsByPrefix(dir, ids)
+	if err != nil {
+		// The caller distinguishes corrupt from unmatched: without this the
+		// error below would blame the id for what the store broke.
+		return nil, false, ensureError(dir, err)
+	}
 	var resolved []string
 	for _, p := range ids {
 		hits := byPrefix[p]
@@ -3237,7 +3257,84 @@ func resolveSearchExcludes(dir string, ids []string, nonce string) (map[string]b
 			resolved = append(resolved, hits...)
 		}
 	}
-	return index.ExpandExclude(dir, resolved, nonce)
+	out, found, err := index.ExpandExclude(dir, resolved, nonce)
+	if err != nil {
+		if index.IsCorrupt(err) {
+			// The exclusion ran before the search, so it missed the retry
+			// the search itself would take on a torn read: refresh once,
+			// then resolve again rather than failing what would have healed.
+			if rerr := index.EnsureForSearch(dir, search.Options{All: true}, true, nil); rerr == nil {
+				return index.ExpandExclude(dir, resolved, nonce)
+			}
+		}
+		return nil, false, ensureError(dir, err)
+	}
+	return out, found, nil
+}
+
+// sessionsListCap bounds the rows `mss search --sessions` prints: a machine
+// walks the list by opening sessions, and past this point the answer says so
+// rather than printing ten thousand ids. The hit cap stays separate — the
+// list answers a different question from the hits, but neither question
+// wants an unbounded page.
+const sessionsListCap = 500
+
+// orderSessionsForList turns the retrieval set into the candidate list: what
+// the hits already proved matched, in hit order, then whatever else matched
+// by identity order. Hits prove the match — a session the scorer saw and
+// kept — so their ranking is the list's; the relevance tail, relevance
+// window rows beyond the hits, and any session a filter kept out of the
+// hits stay sorted but unranked behind them. The --session filter, which the
+// scorer honours while building hits, is re-applied: retrieval hands back
+// every matching session and the filter only bound the hits.
+func orderSessionsForList(dir string, ss []model.Session, hits []search.Hit, o search.Options, result index.SearchResult) (listed []model.Session, capped bool, total int) {
+	byKey := make(map[string]model.Session, len(ss))
+	for _, s := range ss {
+		key := s.Harness + ":" + s.ID
+		if _, seen := byKey[key]; !seen {
+			byKey[key] = s
+		}
+	}
+	keep := func(s model.Session) bool {
+		if o.Session != "" && !strings.HasPrefix(s.ID, o.Session) && !strings.HasPrefix(s.OrigID, o.Session) {
+			return false
+		}
+		return true
+	}
+	matched := make(map[string]bool, len(hits))
+	for _, h := range hits {
+		key := h.Session.Harness + ":" + h.Session.ID
+		if _, ok := byKey[key]; !ok {
+			continue
+		}
+		if !keep(h.Session) {
+			continue
+		}
+		if !matched[key] {
+			matched[key] = true
+			listed = append(listed, byKey[key])
+		}
+	}
+	var rest []model.Session
+	for key, s := range byKey {
+		if matched[key] || !keep(s) {
+			continue
+		}
+		rest = append(rest, s)
+	}
+	sort.Slice(rest, func(i, j int) bool {
+		if rest[i].Harness != rest[j].Harness {
+			return rest[i].Harness < rest[j].Harness
+		}
+		return rest[i].ID < rest[j].ID
+	})
+	listed = append(listed, rest...)
+	total = len(listed)
+	if len(listed) > sessionsListCap {
+		listed = listed[:sessionsListCap]
+		capped = true
+	}
+	return listed, capped, total
 }
 
 // sessionsMatchIndices computes, per served session, where the query landed —
@@ -3247,6 +3344,14 @@ func resolveSearchExcludes(dir string, ids []string, nonce string) (map[string]b
 // for the rest. The positions are the transcript's numbering, not the
 // filtered list's, so a record the policy keeps out still counts its slot.
 func sessionsMatchIndices(dir string, ss []model.Session, o search.Options, result index.SearchResult) (map[string][]int, error) {
+	if o.Regex || !index.QueryHasTerms(o.Query) {
+		// A regex has no term check — the real pattern runs in the scorer,
+		// which this walk never consults — and a query with no terms
+		// matches by presence, not by content. Both would report every
+		// servable record as a match, so neither gets positions: the row
+		// keeps its hit_count, matched_indices stays absent.
+		return nil, nil
+	}
 	keys := make(map[string]bool, len(ss))
 	for _, s := range ss {
 		keys[s.Harness+":"+s.ID] = true

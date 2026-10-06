@@ -13,6 +13,7 @@ import (
 
 type recentJSON struct {
 	SchemaVersion int             `json:"schema_version"`
+	ProducedBy    string          `json:"produced_by"`
 	Sessions      []model.Session `json:"sessions"`
 	// Withheld is how many rows the trust policy kept out of this listing —
 	// the same fact the text form prints on stderr (#990).
@@ -49,21 +50,18 @@ type sessionCandidate struct {
 // sessionsEnvelope is the candidate-list answer `mss search --sessions`
 // writes. It exists because the ranked list answers a different question —
 // which eight sessions to show — and a reader who wants the whole matching
-// set gets a page instead of the set.
+// set gets a page instead of the set. Total and capped describe the list
+// itself, not the hits: past sessionsListCap the list stops and says so.
 type sessionsEnvelope struct {
 	SchemaVersion int    `json:"schema_version"`
 	ProducedBy    string `json:"produced_by"`
 	// Match is the same word the hit envelope uses: "found" means these
 	// sessions matched, "candidates" means nothing did and the list is the
 	// relevance ranking's whole take.
-	Match  string `json:"match"`
-	Query  string `json:"query"`
-	Total  int    `json:"total"`
-	Capped bool   `json:"capped,omitempty"`
-	// CappedTotal is how many sessions matched before the ranked window
-	// trimmed, when it differs from Total — the candidate list is still the
-	// whole set the tier served, named for a consumer that would otherwise
-	// read Total as a cap.
+	Match    string             `json:"match"`
+	Query    string             `json:"query"`
+	Total    int                `json:"total"`
+	Capped   bool               `json:"capped,omitempty"`
 	Withheld int                `json:"policy_withheld,omitempty"`
 	Strict   int                `json:"strict,omitempty"`
 	Sessions []sessionCandidate `json:"sessions"`
@@ -81,7 +79,7 @@ func printRecentJSONWithheld(w io.Writer, sessions []model.Session, sourceInstan
 	if sessions == nil {
 		sessions = []model.Session{}
 	}
-	return json.NewEncoder(w).Encode(recentJSON{SchemaVersion: jsonout.Version, Sessions: sessions, Withheld: withheld})
+	return json.NewEncoder(w).Encode(recentJSON{SchemaVersion: jsonout.Version, ProducedBy: "mss", Sessions: sessions, Withheld: withheld})
 }
 
 // sliceMessages applies --offset and --limit. Both are documented for `mss
@@ -141,7 +139,7 @@ func printSessionJSON(w io.Writer, dir string, session model.Session, offset, li
 // produces: the whole matching set as session metadata plus where the query
 // landed, not excerpts. A reader walks it to choose what to open with
 // `mss show --around`, which is the only reason the indices exist.
-func printSessionsJSON(w io.Writer, sessions []model.Session, matchIndices map[string][]int, o search.Options) error {
+func printSessionsJSON(w io.Writer, sessions []model.Session, matchIndices map[string][]int, o search.Options, listCapped bool, listTotal int) error {
 	cands := make([]sessionCandidate, 0, len(sessions))
 	for _, s := range sessions {
 		s.Messages = nil
@@ -162,8 +160,8 @@ func printSessionsJSON(w io.Writer, sessions []model.Session, matchIndices map[s
 		ProducedBy:    "mss",
 		Match:         matchStringFor(o, len(cands)),
 		Query:         o.Query,
-		Total:         o.Total,
-		Capped:        o.Capped,
+		Total:         listTotal,
+		Capped:        listCapped,
 		Withheld:      o.PolicyWithheld,
 		Strict:        o.Strict,
 		Sessions:      cands,
@@ -171,14 +169,8 @@ func printSessionsJSON(w io.Writer, sessions []model.Session, matchIndices map[s
 	})
 }
 
-// matchStringFor mirrors the hit envelope's match rule for the candidate
-// list: strict hits on a relevance answer still mean found.
+// matchStringFor is the candidate list's form of the hit envelope's match
+// rule: strict hits on a relevance answer still mean found.
 func matchStringFor(o search.Options, n int) string {
-	if n == 0 {
-		return "none"
-	}
-	if o.Tier == search.TierRelevance && o.Strict == 0 {
-		return "candidates"
-	}
-	return "found"
+	return search.MatchLabel(o, n)
 }

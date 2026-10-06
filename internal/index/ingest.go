@@ -318,12 +318,9 @@ func EnsureForSearch(dir string, o query.Options, force bool, progress io.Writer
 	unlock, err := lockDir(dir)
 	if err != nil {
 		// A read-only index — a container mount, a locked-down machine — can
-		// still answer every question asked of it. Failing here made mss
-		// unusable on those, while the hook path in the same situation simply
-		// stays quiet. Serve what is on disk and skip the freshness check.
-		if errors.Is(err, fs.ErrPermission) && HasManifest(dir) {
-			return nil
-		}
+		// still answer every question asked of it, but only the caller knows
+		// it answered from what was there rather than what the disk holds now.
+		// Swallowing the error here served the stale answer in silence.
 		return err
 	}
 	defer unlock()
@@ -538,12 +535,11 @@ func rebuildDead(dir string, harness string, scope string, files map[string]File
 			// An mss tool result sitting inside a session it served keeps its
 			// record — `show` reads what the transcript says — but earns no
 			// postings, so a search cannot find its own answer again. The gate
-			// walks messages in transcript order, before the skip checks, so a
-			// dropped or duplicated result still consumes the slot it paired
-			// with.
+			// walks the stream in transcript order after the skip checks, so
+			// its state mirrors the records that land in the store — the same
+			// stream MatchedRecordPositions replays over.
 			var gate mssEchoGate
 			for mi, msg := range s.Messages {
-				silent := gate.suppress(msg)
 				if seenMsgs.dup(key, msg.Role, msg.Time, msg.Text) {
 					continue
 				}
@@ -555,6 +551,7 @@ func rebuildDead(dir string, harness string, scope string, files map[string]File
 				if strings.TrimSpace(text) == "" {
 					continue
 				}
+				silent := gate.suppress(msg)
 				pos := positions[key]
 				off, err := rw.write(Record{Key: key, SourcePath: s.Path, Role: msg.Role, Text: text, Time: msg.Time})
 				if err != nil {
@@ -1504,10 +1501,11 @@ func writeSessionsWithSync(tmp, dir string, ss []model.Session, files map[string
 			// An mss tool result's record is written — `show` reads what the
 			// transcript says — but its postings are not: a search must not
 			// find its own answer again. The gate is per session because the
-			// command/result pairing it mirrors is per session.
+			// command/result pairing it mirrors is per session, and it runs
+			// after the skip checks so its state mirrors the stored stream —
+			// the same stream MatchedRecordPositions replays over.
 			var gate mssEchoGate
 			for mi, msg := range s.Messages {
-				silent := gate.suppress(msg)
 				if seenMsgs.dup(key, msg.Role, msg.Time, msg.Text) {
 					continue
 				}
@@ -1519,6 +1517,7 @@ func writeSessionsWithSync(tmp, dir string, ss []model.Session, files map[string
 				if strings.TrimSpace(text) == "" {
 					continue
 				}
+				silent := gate.suppress(msg)
 				pos := positions[key]
 				off, err := rw.write(Record{Key: key, SourcePath: s.Path, Role: msg.Role, Text: text, Time: msg.Time})
 				if err != nil {
@@ -3908,30 +3907,27 @@ func updateIndex(dir, harness, scope string, files map[string]FileState, force b
 			return err
 		}
 		positions[r.Key]++
-		if silent {
-			// mss's own output coming back through the store keeps its
-			// record — `show` reads what the transcript says — but earns no
-			// postings: a search must not find its own answer again.
-			if _, exists := m.Sessions[r.Key]; !exists {
-				m.Sessions[r.Key] = meta
-			}
-			return nil
+		if !silent {
+			eachIndexKey(r.Text, r.Time, func(tok string) {
+				b := bucket(tok)
+				if buckets[b] == nil {
+					buckets[b] = map[string][]posting{}
+				}
+				buckets[b][tok] = append(buckets[b][tok], posting{Off: off, Sid: meta.Ord})
+			})
 		}
-		eachIndexKey(r.Text, r.Time, func(tok string) {
-			b := bucket(tok)
-			if buckets[b] == nil {
-				buckets[b] = map[string][]posting{}
-			}
-			buckets[b][tok] = append(buckets[b][tok], posting{Off: off, Sid: meta.Ord})
-		})
-		if _, exists := m.Sessions[r.Key]; exists {
-			return nil
+		if _, exists := m.Sessions[r.Key]; !exists {
+			m.Sessions[r.Key] = meta
 		}
-		m.Sessions[r.Key] = meta
 		return nil
 	}
 	var recErr error
-	// The sessions that lost a record here, which the command failure walk
+	// The gate replays over the records this pass emits, in stored order,
+	// per key — the same walk MatchedRecordPositions replays later. A
+	// carried record's postings used to be re-derived blindly, so a
+	// suppressed mss echo regained its postings on the first rewrite-grade
+	// pass and a search could find its own answer again.
+	carryGates := map[string]*mssEchoGate{}
 	// has to read again along with the ones re-read (#4288).
 	dropped := map[string]bool{}
 	if err := eachRecord(filepath.Join(dir, "records.bin"), tablesFromManifest(old), func(r Record) {
@@ -3961,8 +3957,17 @@ func updateIndex(dir, harness, scope string, files map[string]FileState, force b
 		}
 		if r.SourcePath == "" {
 			dropped[r.Key] = true // addRec does not carry it
+			return
 		}
-		recErr = addRec(r, false)
+		// Only records that are emitted again consume the gate: the replay
+		// walks what is stored, so a record this pass drops must not advance
+		// the pairing or the replay diverges from what postings exist.
+		g := carryGates[r.Key]
+		if g == nil {
+			g = &mssEchoGate{}
+			carryGates[r.Key] = g
+		}
+		recErr = addRec(r, g.suppress(model.Message{Role: r.Role, Text: r.Text, Time: r.Time}))
 	}); err != nil {
 		_ = rw.Close()
 		return err
@@ -4031,17 +4036,20 @@ func updateIndex(dir, harness, scope string, files map[string]FileState, force b
 		}
 		// As in the rebuild paths: an mss tool result keeps its record —
 		// `show` reads what the transcript says — but earns no postings, so a
-		// search cannot find its own answer. The gate walks the messages in
-		// transcript order even when a record cannot be written, so a silent
-		// slot does not confuse the pairing.
+		// search cannot find its own answer. The gate runs after the skip
+		// checks so its state mirrors the stored stream — the same stream
+		// MatchedRecordPositions replays over.
 		var gate mssEchoGate
 		for mi, msg := range s.Messages {
-			silent := gate.suppress(msg)
 			if seenMsgs.dup(key, msg.Role, msg.Time, msg.Text) {
 				continue
 			}
 			// Already redacted (and length-capped) by preRedactSessions above.
 			text := msg.Text
+			if strings.TrimSpace(text) == "" {
+				continue
+			}
+			silent := gate.suppress(msg)
 			pos := positions[key]
 			if err := addRec(Record{Key: key, SourcePath: s.Path, Role: msg.Role, Text: text, Time: msg.Time}, silent); err != nil {
 				_ = rw.Close()
@@ -4259,6 +4267,10 @@ func appendIncremental(dir, harness, scope string, old Manifest, files map[strin
 		return 0, 0, 0, err
 	}
 	defer func() { _ = rw.Close() }()
+	// The log length before this pass's first write: seeds below must count
+	// and replay only the records that were already on file, or a key two
+	// changed files share gets double-counted the second time it seeds.
+	baseSize, _ := rf.Seek(0, io.SeekEnd)
 	buckets := bucketPostings{}
 	// The same rule the two full builds apply: a message repeated verbatim in
 	// one pass is written once. Without it the same rollout held one record or
@@ -4272,6 +4284,22 @@ func appendIncremental(dir, harness, scope string, old Manifest, files map[strin
 	// place.
 	positions := map[string]int{}
 	positionsSeeded := map[string]bool{}
+	// Gates are seeded the same way, because the pairing they enforce spans
+	// append boundaries: an mss command in a previous pass whose result lands
+	// in this pass's tail has to prime the gate the old records left, or the
+	// result gains postings the stored stream says it never had.
+	gates := map[string]*mssEchoGate{}
+	gateFor := func(key string) *mssEchoGate {
+		if g := gates[key]; g != nil {
+			return g
+		}
+		g := &mssEchoGate{}
+		_ = eachRecordForKeysBefore(filepath.Join(dir, "records.bin"), tbl, map[string]bool{key: true}, baseSize, func(r Record) {
+			g.suppress(model.Message{Role: r.Role, Text: r.Text, Time: r.Time})
+		})
+		gates[key] = g
+		return g
+	}
 	// Every session this pass read, for the sidecars at the end.
 	var appended []model.Session
 	loadBucket := func(tok string) (map[string][]posting, error) {
@@ -4338,11 +4366,15 @@ func appendIncremental(dir, harness, scope string, old Manifest, files map[strin
 		for si, s := range ss {
 			key := s.Harness + ":" + s.ID
 			if clippedForSession(clipped, si) != nil && !positionsSeeded[key] {
-				existing, err := recordsForKey(filepath.Join(dir, "records.bin"), tbl, key)
+				// Count only what was on file when the pass began — reading the
+				// live log here can see this pass's own flushed writes and seed
+				// a second file's marks for the same key doubly wrong.
+				n := 0
+				err := eachRecordForKeysBefore(filepath.Join(dir, "records.bin"), tbl, map[string]bool{key: true}, baseSize, func(Record) { n++ })
 				if err != nil {
 					return filesTouched, messages, 0, err
 				}
-				positions[key] = len(existing)
+				positions[key] += n
 				positionsSeeded[key] = true
 			}
 		}
@@ -4464,11 +4496,11 @@ func appendIncremental(dir, harness, scope string, old Manifest, files map[strin
 			}
 			m.Sessions[key] = meta
 			// Same rule as the rebuild paths: an mss tool result keeps its
-			// record and loses its postings; the gate reads every message in
-			// transcript order, before the skip checks.
-			var gate mssEchoGate
+			// record and loses its postings. The gate is seeded from the
+			// records this key already holds — the pairing spans append
+			// boundaries — and runs after the skip checks so its state mirrors
+			// the stored stream MatchedRecordPositions replays.
 			for mi, msg := range s.Messages {
-				silent := gate.suppress(msg)
 				// Already redacted (and length-capped) by preRedactSessions above.
 				text := msg.Text
 				// A message that is nothing but harness plumbing strips to empty
@@ -4480,6 +4512,7 @@ func appendIncremental(dir, harness, scope string, old Manifest, files map[strin
 				if seenMsgs.dup(key, msg.Role, msg.Time, text) {
 					continue
 				}
+				silent := gateFor(key).suppress(msg)
 				pos := positions[key]
 				off, err := rw.write(Record{Key: key, SourcePath: s.Path, Role: msg.Role, Text: text, Time: msg.Time})
 				if err != nil {
@@ -5101,8 +5134,9 @@ func lastCompleteLineOffset(p string, size int64) int64 {
 }
 
 // indexedText is a message's text as the index stores it: plumbing stripped,
-// NFC-canonicalised (this path does not go through redactForIngest, #1098),
-// redacted, then cut to maxIndexedText on a rune boundary.
+// NFC-canonicalised, redacted, then cut to maxIndexedText on a rune boundary.
+// The canonicalisation matters for lookup — NFD input tokenises to the same
+// tokens NFC does (#1098).
 func indexedText(text string) (string, redact.Counts, bool) {
 	redacted, counts := redact.Text(nfcfold.Compose(stripSelfRecall(text)))
 	if len(redacted) <= maxIndexedText {

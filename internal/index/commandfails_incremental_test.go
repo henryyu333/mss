@@ -36,16 +36,28 @@ func (c *cfStore) sid(i int) string { return fmt.Sprintf("%08d-0000-4000-8000-00
 
 // turn is one Bash call and what it printed.
 func (c *cfStore) turn(project string, i, k int, cmd, out string, failed bool) string {
+	return c.turnOnly(project, i, k, cmd) + c.resultOnly(project, i, k, out)
+}
+
+// turnOnly is the command half of a Bash call, for tests that split a run
+// across appends: the parser joins them back, but each lands in its own pass.
+func (c *cfStore) turnOnly(project string, i, k int, cmd string) string {
 	sid, id := c.sid(i), fmt.Sprintf("call_%d_%d", i, k)
 	ts := fmt.Sprintf("2026-09-%02dT10:%02d:00Z", 1+i%28, k%60)
-	cwd := "/tmp/" + project
-	a := map[string]any{"type": "assistant", "sessionId": sid, "timestamp": ts, "cwd": cwd, "message": map[string]any{
+	a := map[string]any{"type": "assistant", "sessionId": sid, "timestamp": ts, "cwd": "/tmp/" + project, "message": map[string]any{
 		"role": "assistant", "content": []any{map[string]any{"type": "tool_use", "id": id, "name": "Bash", "input": map[string]any{"command": cmd}}}}}
-	r := map[string]any{"type": "user", "sessionId": sid, "timestamp": ts, "cwd": cwd, "message": map[string]any{
-		"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": id, "is_error": failed, "content": out}}}}
 	ab, _ := json.Marshal(a)
+	return string(ab) + "\n"
+}
+
+// resultOnly is the output half of a Bash call.
+func (c *cfStore) resultOnly(project string, i, k int, out string) string {
+	sid, id := c.sid(i), fmt.Sprintf("call_%d_%d", i, k)
+	ts := fmt.Sprintf("2026-09-%02dT10:%02d:00Z", 1+i%28, k%60)
+	r := map[string]any{"type": "user", "sessionId": sid, "timestamp": ts, "cwd": "/tmp/" + project, "message": map[string]any{
+		"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": id, "content": out}}}}
 	rb, _ := json.Marshal(r)
-	return string(ab) + "\n" + string(rb) + "\n"
+	return string(rb) + "\n"
 }
 
 func (c *cfStore) prompt(project string, i int, text string) string {

@@ -130,9 +130,9 @@ func TestSearchRebuildsAcrossVersionBump(t *testing.T) {
 	}
 }
 
-// A lock held by another process is the one case where waiting cannot win:
-// the reader answers from the snapshot rather than blocking on a rebuild it
-// cannot join, which is what the atomic swap makes safe.
+// A lock held by another process does not hide the answer: the snapshot
+// read answers from what is on disk without taking it, while the refresh
+// waits its turn. This pins the read half — Search never blocks on the lock.
 func TestSearchUnderHeldLockReadsSnapshot(t *testing.T) {
 	root, dir := allHarnessEnv(t)
 	writeLines(t, filepath.Join(root, "claude", "project", "s.jsonl"), claudeLine("s1", "2026-01-01T00:01:00Z", "lockmarker"))

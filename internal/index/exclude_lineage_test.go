@@ -3,6 +3,7 @@ package index
 import (
 	"io"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/henryyu333/mss/internal/query"
@@ -124,7 +125,8 @@ func TestExpandExcludeSelfFindsTheNonceSession(t *testing.T) {
 
 // A harness whose files exist but cannot be read — here a zstd-framed dsh
 // log without the zstd CLI — belongs in coverage, or "no match" reads as
-// "not in your history".
+// "not in your history". And the converse: a harness with nothing on disk
+// is absent, not unread, or `complete` could never be true.
 func TestSearchCoverageReportsAnUnreadHarness(t *testing.T) {
 	tmp := hermeticIndexEnv(t)
 	dsh := filepath.Join(tmp, "dsh")
@@ -163,4 +165,26 @@ func TestSearchCoverageReportsAnUnreadHarness(t *testing.T) {
 		}
 	}
 	t.Fatalf("unread harness missing from coverage: %v", cov.Unread)
+}
+
+// A harness with no files on disk is absent, not unread: on a machine that
+// only runs one harness, `complete` must be reachable.
+func TestSearchCoverageIgnoresAbsentHarnesses(t *testing.T) {
+	root, dir := allHarnessEnv(t)
+	writeLines(t, filepath.Join(root, "claude", "project", "s.jsonl"), claudeLine("s1", "2026-01-01T00:01:00Z", "absentmarker"))
+	if err := EnsureForSearch(dir, query.Options{All: true}, false, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	cov := SearchCoverage(dir)
+	if cov == nil {
+		t.Fatal("no coverage")
+	}
+	for _, u := range cov.Unread {
+		if strings.HasSuffix(u, ": not read") {
+			t.Fatalf("an absent harness counted as unread: %v", cov.Unread)
+		}
+	}
+	if !cov.Complete {
+		t.Fatalf("complete is unreachable on a single-harness store: %+v", cov)
+	}
 }

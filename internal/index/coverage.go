@@ -1,6 +1,7 @@
 package index
 
 import (
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -27,6 +28,9 @@ func SearchCoverage(dir string) *query.Coverage {
 	cov := &query.Coverage{Complete: true}
 	m, err := readManifestCached(dir)
 	if err != nil {
+		// Nothing is known: an answer beside a missing manifest is not
+		// verifiably complete.
+		cov.Complete = false
 		return cov
 	}
 	read := map[string]bool{}
@@ -41,8 +45,21 @@ func SearchCoverage(dir string) *query.Coverage {
 		if read[h.Name] {
 			continue
 		}
+		// "Unread" means a store exists and could not be read — never a
+		// machine that simply does not run the harness, where naming the
+		// missing data would be noise on every answer.
 		reason := sources.SkipReason(h.Name)
 		if reason == "" {
+			present := false
+			for _, f := range h.Files() {
+				if _, serr := os.Lstat(f); serr == nil {
+					present = true
+					break
+				}
+			}
+			if !present {
+				continue
+			}
 			reason = "not read"
 		}
 		cov.Unread = append(cov.Unread, h.Name+": "+reason)
@@ -109,7 +126,7 @@ func ClippedMessagePositions(dir string, s model.Session) (positions map[int]boo
 	if err != nil {
 		return nil, false
 	}
-	for _, e := range m.IngestFiles {
+	for p, e := range m.IngestFiles {
 		if idx := e.ClippedMsgIdx[s.ID]; len(idx) > 0 {
 			if positions == nil {
 				positions = map[int]bool{}
@@ -119,6 +136,11 @@ func ClippedMessagePositions(dir string, s model.Session) (positions map[int]boo
 			}
 		}
 		if e.ClippedSessions[s.ID] > 0 {
+			sessionHas = true
+		}
+		if p == s.Path && e.ClippedSessions == nil && e.Clipped > 0 {
+			// A store built before the split reports only the file count —
+			// the text path's clippedMessageNote falls back to it too.
 			sessionHas = true
 		}
 	}
@@ -165,6 +187,14 @@ func MatchedRecordPositions(dir string, keys map[string]bool, o query.Options, m
 	return out, err
 }
 
+// QueryHasTerms says whether a query names anything checkable: a query of
+// stopwords or punctuation matches by presence, and its positions would be
+// every record — noise rather than navigation.
+func QueryHasTerms(q string) bool {
+	terms, phrases := query.QueryParts(q)
+	return len(terms) > 0 || len(phrases) > 0
+}
+
 // QueryRecordMatcher adapts the record check a query applies inside
 // MatchedRecordPositions: exact/term/fuzzy all share the one matcher shape.
 func QueryRecordMatcher(o query.Options, variants map[string][]string) func(Record) bool {
@@ -190,14 +220,16 @@ func ErrorSigRecordMatcher(o query.Options) func(Record) bool {
 // SessionIDsByPrefix expands each id-or-prefix into the sessions the index
 // holds. An empty list for a token means "not found"; more than one means
 // the prefix is ambiguous, which the caller reports rather than guessing.
-func SessionIDsByPrefix(dir string, prefixes []string) map[string][]string {
+func SessionIDsByPrefix(dir string, prefixes []string) (map[string][]string, error) {
 	if dir == "" {
 		dir = DefaultDir()
 	}
-	m, err := readManifestCached(dir)
 	out := map[string][]string{}
+	m, err := readManifestCached(dir)
 	if err != nil {
-		return out
+		// The caller distinguishes "no session" from "no index": swallowing
+		// this reported a corrupt store as an unmatched id.
+		return out, err
 	}
 	for _, p := range prefixes {
 		var hits []string
@@ -209,7 +241,7 @@ func SessionIDsByPrefix(dir string, prefixes []string) map[string][]string {
 		sort.Strings(hits)
 		out[p] = hits
 	}
-	return out
+	return out, nil
 }
 
 // ExpandExclude resolves what an exclusion reaches: every session named by

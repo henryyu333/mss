@@ -314,6 +314,14 @@ func readRecord(r io.Reader, t *recordTables) (Record, error) {
 // want; other bodies are skipped after peeking the key field. On a large log
 // this trades a full decode of every record for a few length reads.
 func eachRecordForKeys(path string, t *recordTables, want map[string]bool, fn func(Record)) error {
+	return eachRecordForKeysBefore(path, t, want, 0, fn)
+}
+
+// eachRecordForKeysBefore is eachRecordForKeys stopped at bound bytes —
+// records written after bound are not part of the stream yet, which is how a
+// pass counts or replays only what was on file before it started appending.
+// A zero bound reads the whole log.
+func eachRecordForKeysBefore(path string, t *recordTables, want map[string]bool, bound int64, fn func(Record)) error {
 	atomic.AddInt64(&recordLogScans, 1)
 	f, err := openIndexFile(path)
 	if err != nil {
@@ -322,7 +330,11 @@ func eachRecordForKeys(path string, t *recordTables, want map[string]bool, fn fu
 	defer func() { _ = f.Close() }()
 	r := bufio.NewReaderSize(f, 1024*1024)
 	var hdr [4]byte
+	var off int64
 	for {
+		if bound > 0 && off >= bound {
+			return nil
+		}
 		if _, err := io.ReadFull(r, hdr[:]); err != nil {
 			if err == io.EOF || err == io.ErrUnexpectedEOF {
 				return nil
@@ -330,6 +342,7 @@ func eachRecordForKeys(path string, t *recordTables, want map[string]bool, fn fu
 			return err
 		}
 		n := binary.LittleEndian.Uint32(hdr[:])
+		off += 4 + int64(n)
 		if n > maxRecordSize {
 			return fmt.Errorf("%w: record length %d exceeds cap", errCorruptIndex, n)
 		}

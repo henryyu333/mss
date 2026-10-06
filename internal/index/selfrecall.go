@@ -332,65 +332,130 @@ const mssProducedMarker = `"produced_by":"mss"`
 // does not name the command that produced it, and the tool_call side has
 // already collapsed into a command string by the time a parser hands it over
 // (claude's "Bash" name is gone before ingest sees it). A result carrying the
-// marker is mss's on its own; one right after an `mss` command line is mss's
-// whatever it holds. Anything else clears the expectation — a person or the
-// agent spoke, so the command's result already arrived or never did.
+// marker is mss's on its own; one that arrives while an `mss` command is
+// still unpaired is mss's whatever it holds. Commands only add to the
+// expectation, they do not cancel it — a harness that batches a turn's
+// command lines emits them consecutively, then joins their results into one
+// record or several, so `mss` followed by `go test` still has output coming.
+// The joined record that answers a batch is suppressed whole: it holds the
+// mss output, and no record exists that could keep the sibling command's
+// half.
 type mssEchoGate struct {
-	pending bool
+	pending int
 }
 
 // suppress reports whether msg's postings should be skipped.
 func (g *mssEchoGate) suppress(msg model.Message) bool {
-	if strings.Contains(msg.Text, mssProducedMarker) {
-		g.pending = false
-		return true
-	}
 	if msg.Role == roleCommand {
-		// A command line is a tool role but it is also the primer: the
-		// tool-output branch below never sees "mss search x" itself, so the
-		// pending check has to run here or the positional rule only fires on
-		// prose. A non-mss command arriving while pending means the mss run
-		// never produced output.
-		g.pending = invokesMSS(msg.Text)
+		if invokesMSS(msg.Text) {
+			g.pending++
+		}
 		return false
 	}
+	if strings.Contains(msg.Text, mssProducedMarker) {
+		if g.pending > 0 {
+			g.pending--
+		}
+		return true
+	}
 	if isToolRole(msg.Role) {
-		if g.pending {
-			g.pending = false
+		if g.pending > 0 {
+			g.pending--
 			return true
 		}
 		return false
 	}
-	g.pending = invokesMSS(msg.Text)
+	// Speech is not a command line, but some harnesses store commands under
+	// flat roles — user or assistant — so a line that reads as an mss
+	// invocation primes here too. Narration ("let me run mss search") does
+	// not: it is not a command line, it just names one.
+	if invokesMSSLine(msg.Text) {
+		g.pending++
+	}
 	return false
 }
 
-// invokesMSS answers whether a command line runs mss. The check is the
-// command word followed by an mss subcommand or a flag — bare word matching
-// would call every mention of the tool an invocation ("the mss notes"), and
-// the result it suppresses would be the real one after it. A word that only
-// ends in mss ("mssf") or sits in prose is not an invocation.
+// invokesMSSLine answers whether a whole line is an mss invocation — used
+// for flat-role transcripts where a command sits in a user or assistant
+// message. Leading shell decoration ($ or > prompts, env assignments, a
+// /mss skill prefix) is allowed; text before that is speech naming the tool,
+// not a command line, and suppressing the next real result for it loses
+// postings that are evidence.
+func invokesMSSLine(text string) bool {
+	fields := strings.Fields(text)
+	for len(fields) > 0 {
+		f := fields[0]
+		if strings.HasPrefix(f, "/mss") || strings.HasPrefix(f, "!/mss") {
+			return true
+		}
+		if f == "$" || f == ">" || f == "%" || isEnvAssign(f) || f == "sudo" {
+			fields = fields[1:]
+			continue
+		}
+		return invokesMSS(text)
+	}
+	return false
+}
+
+// isEnvAssign names the KEY=value fields a command line can lead with.
+func isEnvAssign(f string) bool {
+	i := strings.IndexByte(f, '=')
+	if i <= 0 {
+		return false
+	}
+	for j := 0; j < i; j++ {
+		c := f[j]
+		if !(c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || j > 0 && c >= '0' && c <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// invokesMSS answers whether a command line runs mss: the word mss in
+// command position — after a statement separator, an env assignment, or
+// `sudo`, never as an argument — followed by a subcommand, a flag, or a
+// bare-query word, and nothing after it that names a different command
+// (`mss` as the last argument of `go build ./cmd/mss` is a path, not a run).
+// Word matching would call every mention of the tool an invocation, and the
+// result it suppresses would be the real one after it.
 func invokesMSS(text string) bool {
 	fields := strings.Fields(text)
 	for i, f := range fields {
 		f = strings.TrimLeft(f, "$>")
+		f = strings.TrimSuffix(f, ";")
 		name := filepath.Base(f)
 		if name != "mss" && name != "mss.exe" {
 			continue
 		}
-		// mss with nothing after it prints help; that is still an mss run,
-		// but the field before a plain "mss" is what decides here — "xargs -I
-		// {} mss" is rare enough to stand. What follows is the stronger
-		// signal: a subcommand or a flag confirms the run even mid-pipeline.
+		// Command position: the previous field is a separator (`;`, `&&`,
+		// `|`, `||`), a prompt char, sudo, an env assignment, or there is
+		// none. Anything else — `go build ./cmd/mss`, `git clone .../mss`,
+		// `grep mss` — is the word sitting in an argument slot.
+		if i > 0 {
+			prev := fields[i-1]
+			if !isShellSep(prev) && prev != "$" && prev != ">" && !isEnvAssign(prev) && prev != "sudo" {
+				continue
+			}
+		}
 		if i+1 >= len(fields) {
+			// Bare `mss` prints help — still an mss run, in command position.
 			return true
 		}
 		next := fields[i+1]
-		if strings.HasPrefix(next, "-") || mssCommands[strings.TrimLeft(next, "-")] {
+		// mss accepts the query bare (`mss needle` routes to search), so the
+		// next word cannot be a positional argument the way `go test` has;
+		// it is the run itself. Subcommand, flag, or word — all confirm it.
+		if strings.HasPrefix(next, "-") || mssCommands[strings.TrimLeft(next, "-")] || !isShellSep(next) {
 			return true
 		}
 	}
 	return false
+}
+
+// isShellSep names the field that ends one command and starts another.
+func isShellSep(f string) bool {
+	return f == ";" || f == "&&" || f == "||" || f == "|" || f == "|&"
 }
 
 // mssCommands are the subcommands a transcript shows after `mss`: enough to

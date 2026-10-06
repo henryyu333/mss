@@ -71,7 +71,7 @@ func searchDetailedOnce(dir string, o query.Options) (SearchResult, error) {
 	if dir == "" {
 		dir = DefaultDir()
 	}
-	// Non-blocking: while a detached rebuild holds the lock, read the
+	// Non-blocking: while another mss holds the lock building, read the
 	// current snapshot lock-free — the directory swap is atomic and a torn
 	// read fails recordsIntact, which SearchWithRecoveryDetailed retries.
 	unlock, ok, err := tryLockDir(dir)

@@ -7,6 +7,7 @@ import (
 
 	"github.com/henryyu333/mss/internal/jsonout"
 	"github.com/henryyu333/mss/internal/model"
+	"github.com/henryyu333/mss/internal/query"
 )
 
 // docs/json-output.md is the contract mss publishes for `search --json`. This
@@ -19,7 +20,10 @@ func TestSearchJSONKeysMatchTheDocumentedContract(t *testing.T) {
 		// envelope
 		"schema_version": true, "tier": true, "total": true, "capped": true,
 		"policy_withheld": true, "hits": true, "fuzzy": true, "stemmed": true,
-		"strict": true, "match": true, "produced_by": true,
+		"strict": true, "match": true, "produced_by": true, "coverage": true,
+		"unread": true, "skipped": true, "records": true, "files": true,
+		"clipped": true, "self_requested": true, "self_excluded": true,
+		"complete": true,
 		"semantic": true, "variants": true,
 		// hit
 		"session": true, "count": true, "snippets": true, "score": true,
@@ -32,18 +36,26 @@ func TestSearchJSONKeysMatchTheDocumentedContract(t *testing.T) {
 		// source
 		"origin": true, "instance": true,
 		// message
-		"role": true, "text": true, "time": true,
+		"role": true, "text": true, "time": true, "index": true,
 	}
 	now := time.Now()
+	idx := 3
 	env := searchJSONEnvelope{
 		SchemaVersion: jsonout.Version, Tier: "exact", Total: 1, Strict: 1, Capped: true,
 		Withheld: 1, Fuzzy: true, Stemmed: true, Semantic: true,
 		Variants: map[string][]string{"a": {"b"}},
+		Coverage: &query.Coverage{
+			Unread:        []string{"deepseek: zstd CLI not found"},
+			Skipped:       map[string]query.SkippedIngest{"deepseek": {Records: 6, Files: 2}},
+			Clipped:       2,
+			SelfRequested: true, SelfExcluded: true,
+			Complete: false,
+		},
 		Hits: []Hit{{
 			Session: model.Session{
 				ID: "i", Harness: "claude", Project: "p", Path: "/x", Title: "t",
 				Started: now, Updated: now,
-				Messages: []model.Message{{Role: "user", Text: "x", Time: now}},
+				Messages: []model.Message{{Role: "user", Text: "x", Time: now, Index: &idx}},
 				Source:   &model.Source{Origin: "local", Instance: "w"},
 				Touched:  []string{"f"}, AgentTitle: true, OrigID: "o",
 				Lifecycle: "accepted", LifecycleNote: "n", LifecycleAt: "2026",
@@ -63,8 +75,9 @@ func TestSearchJSONKeysMatchTheDocumentedContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	keys := map[string]bool{}
-	// variants is map[queryTerm][]string: its keys are user data, not schema, so
-	// its subtree is not walked for schema keys.
+	// variants is map[queryTerm][]string and skipped is map[harness]counts:
+	// their keys are user data, not schema, so neither subtree is walked for
+	// schema keys.
 	var walk func(v any, underData bool)
 	walk = func(v any, underData bool) {
 		switch node := v.(type) {
@@ -74,7 +87,7 @@ func TestSearchJSONKeysMatchTheDocumentedContract(t *testing.T) {
 					continue
 				}
 				keys[k] = true
-				walk(sub, k == "variants")
+				walk(sub, k == "variants" || k == "skipped")
 			}
 		case []any:
 			for _, sub := range node {

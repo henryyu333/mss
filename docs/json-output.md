@@ -125,16 +125,18 @@ say, in the word a consumer decides on: `relevance` with no strict hits is
 `candidates`, while a thin strict head inside one stays `found`.
 
 `coverage` is present on every answer and reports what the refresh could not
-see: `unread` names stores nothing was read from (with the reason, for
-example `deepseek: zstd CLI not found`), `skipped` counts malformed records
-and failed files per harness, `clipped` counts messages stored short of the
-transcript, and `complete` is true only when none of those happened — and a
-requested `--exclude-self` succeeded (`self_requested`/`self_excluded`).
+see: `unread` names stores that exist but could not be read (with the reason,
+for example `deepseek: zstd CLI not found`) — a harness with nothing on disk
+is absent, not unread. `skipped` counts malformed records and failed files
+per harness, `clipped` counts messages stored short of the transcript, and
+`complete` is true only when none of those happened — and a requested
+`--exclude-self` resolved (`self_requested` notes the request; `self_excluded`
+is present only when the nonce matched, and its absence with `complete: false`
+is the unexcluded signal).
 
 Every message in a hit carries `index` — its 0-based position in the
 session's records, the numbering `mss show --offset` and `--around` read —
 so a consumer walks from the answer to the passage without re-counting.
-```
 
 The envelope's `tier` and each hit's `tier` are the same idea at two scopes,
 which is why they share a name. The fallback flags stay alongside for readers
@@ -204,8 +206,13 @@ sessions matched — without the excerpts or the hit cap. It forces JSON:
 }
 ```
 
-`sessions` is the whole matching set after the same filters (`--harness`,
-`--project`, `--since`, `--role`, `--exclude`), ranked order preserved.
+`sessions` is the matching set after the same filters (`--harness`,
+`--project`, `--since`, `--role`, `--session`, `--exclude`): hits first in
+hit order, then the rest by harness and id. On the `found` tiers it is the
+whole set; on a `candidates` answer it is the relevance ranking's window —
+`total` and `capped` there describe the ranking, and past `500` rows the list
+itself stops with `capped: true`. `--re` and termless queries keep `hit_count`
+but omit `matched_indices`, which a pattern rather than terms produced.
 `hit_count` is how many records matched; `matched_indices` are their record
 numbers — each feeds `mss show <id> --harness <h> --around N` directly.
 
@@ -275,6 +282,7 @@ return redacted index content in a bounded message window; the default limit is
 ```json
 {
   "schema_version": 2,
+  "produced_by": "mss",
   "session": {
     "harness": "codex",
     "id": "abc123",
@@ -283,7 +291,7 @@ return redacted index content in a bounded message window; the default limit is
     "updated": "2026-01-02T03:10:00Z",
     "source": {"origin": "local", "instance": "workstation"},
     "messages": [
-      {"role": "user", "text": "bounded redacted text", "time": "2026-01-02T03:04:05Z"}
+      {"role": "user", "text": "bounded redacted text", "time": "2026-01-02T03:04:05Z", "index": 0}
     ]
   },
   "window": {"offset": 0, "limit": 50, "total": 81, "returned": 50}
@@ -294,5 +302,6 @@ Use `--offset N --limit N` to page without parsing human output, or
 `--around N` to centre the window on record number N — the same `index`
 every message in a search hit carries; `--offset` and `--around` are
 exclusive. `window.clipped` is present and true when the window holds a
-message the index stored short of the transcript. An offset past the end
+message the index stored short of the transcript — or, on an index that only
+kept the file count, when the session is known to hold one anywhere. An offset past the end
 returns a session with no `messages` key and a `returned` count of zero.

@@ -47,9 +47,11 @@ func TestReadOnlyIndexStillAnswers(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 
-	// The freshness check cannot run, and that is not a reason to refuse.
-	if err := EnsureForSearch(dir, query.Options{Query: "readonly", All: true}, false, io.Discard); err != nil {
-		t.Fatalf("EnsureForSearch on a read-only index: %v", err)
+	// The freshness check cannot run: the caller sees the error and answers
+	// from what is on disk, naming the staleness instead of serving it in
+	// silence.
+	if err := EnsureForSearch(dir, query.Options{Query: "readonly", All: true}, false, io.Discard); err == nil {
+		t.Fatal("EnsureForSearch on a read-only index reported fresh")
 	}
 	got, err := Search(dir, query.Options{Query: "readonly", All: true})
 	if err != nil {

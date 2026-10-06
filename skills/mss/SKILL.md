@@ -27,8 +27,8 @@ hide: true
    ```
    - nonce 必须是本轮独有、不会在别处出现的字符串；它通过这条命令行被写进本会话的转录，mss 据此把**当前会话**连同它的子代理和分叉一起排除。之后本轮每次 mss 调用都带同一个 nonce。
    - 另有要排除的 session 用 `--exclude <id-or-prefix>`（可重复），它会连带排除其子代理与分叉。
-   - 读信封：`match` 是 `found` / `candidates` / `none`；`coverage.self_excluded` 为 `false` 表示当前会话没能排除（转录里还没写入这条命令行），汇报时必须说明"当前会话未排除"，不得静默。`coverage` 里 `unread` / `skipped` / `clipped` 说明本次检索没覆盖的部分，`complete: true` 表示无缺口。
-   - `sessions` 是匹配全集（不受 8 条上限），每行有 session 元数据、`hit_count` 和 `matched_indices`（记录序号，与 `show` 同一套编号）。
+   - 读信封：`match` 是 `found` / `candidates` / `none`；`coverage.self_requested` 存在而 `self_excluded` 缺席表示当前会话没能排除（转录里还没写入这条命令行，此时 `complete` 为 `false`），汇报时必须说明"当前会话未排除"，不得静默。`coverage` 里 `unread`（存在的源没读到；没有该 harness 的数据不算） / `skipped` / `clipped` 说明本次检索没覆盖的部分，`complete: true` 表示无缺口。
+   - `sessions` 是匹配全集（`found` 时不受条数上限，最多 500 行并以 `capped` 说明），每行有 session 元数据、`hit_count` 和 `matched_indices`（记录序号，与 `show` 同一套编号；`--re` 或无检索词的查询只有 `hit_count`）。
    - 加过滤器收窄：`--project` / `--since` / `--harness` / `--role`。
 
 4. **读原文**：对候选用 `matched_indices` 里的序号直接读命中附近，不要只看搜索摘要下结论：
