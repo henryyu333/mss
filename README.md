@@ -1,5 +1,7 @@
 # mss
 
+English | [简体中文](README.zh-CN.md)
+
 Search your coding agents' past sessions — when you ask, not when they guess.
 
 `mss` is one Go binary that indexes the session transcripts your coding agents
@@ -49,7 +51,8 @@ documented in [`docs/json-output.md`](docs/json-output.md).
 | --- | --- |
 | `mss index [--rebuild] [--quiet]` | Build or incrementally update the index |
 | `mss [search] [flags] <query>` | Search; `--json`, `--harness`, `--project`, `--since`, `--role`, `--session`, `--limit`, `--all`, `--re` |
-| `mss show <id-prefix>` | Read one session's transcript, by the id a hit prints |
+| `mss search --sessions --json <query>` | Every matching session as metadata only — hit count and the record positions that matched — capped at 500 rows; `--exclude <id>` and `--exclude-self <nonce>` drop a session together with its subagents and forks |
+| `mss show <id-prefix>` | Read one session's transcript, by the id a hit prints; `--around <n>` centres the window on record `n` |
 | `mss ctx <query\|id-prefix>` | A larger window around the best match, for pasting into a conversation |
 | `mss last [n]` | The most recently updated sessions |
 | `mss sources` | Every store mss looks at, with session and message counts |
@@ -92,11 +95,15 @@ Useful environment variables: `MSS_INDEX_DIR` (index location),
 ## Agents
 
 `mss` is built to be driven **only on explicit request** — a person typing
-`/mss <query>`, or a script that says so. Point your agent at it as a skill or
-a tool call that runs `mss search --json`, `mss show`, or `mss ctx`, and let it
-answer from the returned original text. The point of the design is the
+`/mss <query>`, or a script that says so. The point of the design is the
 opposite of a memory system: nothing is searched, injected, or remembered until
-someone asks.
+someone asks, and nothing the agent concludes is saved.
+
+[`skills/mss/SKILL.md`](skills/mss/SKILL.md) is the skill that drives it: list
+the candidate sessions with `search --sessions`, read the originals at the
+matched positions with `show --json --around`, and report a timeline that cites
+harness, date and session id, marks later reversals and paraphrases, and states
+what the search could not cover (`coverage` in the JSON envelope).
 
 ## License
 
