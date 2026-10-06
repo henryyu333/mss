@@ -96,6 +96,19 @@ func mergeIngestDiag(m *Manifest) {
 	if m.IngestFiles == nil {
 		m.IngestFiles = map[string]FileIngest{}
 	}
+	// Fresh names the paths this pass reported on. A file mss could not read
+	// at all is exactly the one a walk may not see, so its row has to outlive
+	// the cleanup below even when the file never entered the index.
+	fresh := make(map[string]bool, len(malformed)+len(failed)+len(reasons))
+	for p := range malformed {
+		fresh[p] = true
+	}
+	for p := range failed {
+		fresh[p] = true
+	}
+	for p := range reasons {
+		fresh[p] = true
+	}
 	// Whatever this pass read, it read whole: its files start from nothing and
 	// take what the parsers just reported. A database store read from its
 	// watermark is the exception for the rows it skipped before: they are
@@ -116,7 +129,15 @@ func mergeIngestDiag(m *Manifest) {
 	}
 	for p, n := range malformed {
 		e := m.IngestFiles[p]
-		e.Malformed += n
+		if _, indexed := m.Files[p]; indexed {
+			e.Malformed += n
+		} else {
+			// Not in the index: the whole file was re-read this pass and
+			// these lines are what it holds, not an addition to an earlier
+			// pass — adding would grow the count with every retry of the
+			// same unreadable bytes.
+			e.Malformed = n
+		}
 		m.IngestFiles[p] = e
 	}
 	for p, r := range reasons {
@@ -163,10 +184,12 @@ func mergeIngestDiag(m *Manifest) {
 			}
 		}
 	}
-	// A file mss no longer walks has nothing left to report. Kept for a file
-	// that failed to open, which is exactly the file a walk may not see.
+	// A file mss no longer walks has nothing left to report — unless this
+	// pass just reported on it. Kept for a file that failed to open, and for
+	// one nothing could be read out of: both are exactly the files a walk
+	// may not see, and the run has already told the reader about them.
 	for p, e := range m.IngestFiles {
-		if e.Error != "" {
+		if e.Error != "" || fresh[p] {
 			continue
 		}
 		if _, ok := m.Files[p]; !ok {
