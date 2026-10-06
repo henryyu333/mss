@@ -2919,6 +2919,7 @@ Usage:
   mss [flags] <query>
   mss search [flags] <query>   (same, but a query may start with a dash)
   mss show <id-prefix> [--json --harness name] [--offset n] [--limit n]
+           [--around n] [--brief [n] --role name] [--no-refresh]
   mss ctx <query|id-prefix>
   mss last [n] [--json] [--project name] [--harness name] [--since duration] [--role user|assistant|tool|files|command|edit|summary]
   mss sources
@@ -2927,8 +2928,8 @@ Usage:
   mss version
   mss <command> --help
 
-Search flags (the bare "mss [flags] <query>" form above):
-  --harness <name>              only sessions from one harness (claude, codex, ...)
+Search flags ("mss search" or the bare "mss [flags] <query>" form):
+  --harness <name>              only sessions from one harness (claude, codex…)
   --project <name>              only sessions from one project
   --since <duration>            only sessions newer than e.g. 30d, 12h
   --role <name>                 only match turns from one role: user, assistant,
@@ -2936,8 +2937,23 @@ Search flags (the bare "mss [flags] <query>" form above):
   --session <id>                only one session, by the id a hit prints
   --limit <1-100>               max sessions to return (default 15)
   --all                         return every match, no cap
+  --sessions                    the matching set instead of the ranked hits:
+                                session metadata, hit count and record positions
+  --sort updated                order --sessions by last update, newest first
+  --exclude <id-or-prefix>      drop a session, with its subagents and forks
+  --exclude-self <nonce>        leave out the session carrying this nonce
+  --no-refresh                  answer from the index as it was; "mss index"
+                                refreshes it
   --re                          treat the query as a regular expression
   --json                        machine-readable output
+
+Show flags:
+  --around <n>                  centre the window on record n (a hit's "index")
+  --brief [n]                   one header per message — index, role, time —
+                                and the body cut at n characters (default 200)
+  --role <name>                 with --brief: only these roles; repeat for more
+  --no-refresh                  answer from the index as it was; "mss index"
+                                refreshes it
 
 Examples:
   mss "jwt refresh token bug"
@@ -2949,6 +2965,8 @@ Examples:
   mss last --project api-gateway
   mss last --since 7d --role user
   mss --session 01a00feb --role tool "go build"   (what ran inside one session)
+  mss search --sessions --sort updated "worktree cleanup"   # newest first
+  mss show 01a0f7c6 --harness pi --brief --around 12 --limit 40
   mss --re "timeout|deadline exceeded"
   mss ctx "schema migration rollback" > mss-context.md
 `

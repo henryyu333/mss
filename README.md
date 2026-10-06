@@ -50,9 +50,9 @@ documented in [`docs/json-output.md`](docs/json-output.md).
 | Command | What it does |
 | --- | --- |
 | `mss index [--rebuild] [--quiet]` | Build or incrementally update the index |
-| `mss [search] [flags] <query>` | Search; `--json`, `--harness`, `--project`, `--since`, `--role`, `--session`, `--limit`, `--all`, `--re` |
-| `mss search --sessions --json <query>` | Every matching session as metadata only — hit count and the record positions that matched — capped at 500 rows; `--exclude <id>` and `--exclude-self <nonce>` drop a session together with its subagents and forks |
-| `mss show <id-prefix>` | Read one session's transcript, by the id a hit prints; `--around <n>` centres the window on record `n` |
+| `mss [search] [flags] <query>` | Search; `--json`, `--harness`, `--project`, `--since`, `--role`, `--session`, `--limit`, `--all`, `--re`, `--no-refresh` |
+| `mss search --sessions --json <query>` | Every matching session as metadata only — hit count and the record positions that matched — capped at 500 rows; `--sort updated` orders them newest-first; `--exclude <id>` and `--exclude-self <nonce>` drop a session together with its subagents and forks |
+| `mss show <id-prefix>` | Read one session's transcript, by the id a hit prints; `--around <n>` centres the window on record `n`; `--brief` prints one header per message (index, role, time) with the body cut short, for scanning; `--no-refresh` reads the index as it was instead of refreshing first |
 | `mss ctx <query\|id-prefix>` | A larger window around the best match, for pasting into a conversation |
 | `mss last [n]` | The most recently updated sessions |
 | `mss sources` | Every store mss looks at, with session and message counts |

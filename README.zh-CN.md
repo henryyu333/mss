@@ -45,9 +45,9 @@ mss sources                        # 读取了哪些数据源、各有多少内�
 | 命令 | 作用 |
 | --- | --- |
 | `mss index [--rebuild] [--quiet]` | 建立或增量更新索引 |
-| `mss [search] [flags] <query>` | 搜索；可用 `--json`、`--harness`、`--project`、`--since`、`--role`、`--session`、`--limit`、`--all`、`--re` |
-| `mss search --sessions --json <query>` | 列出全部匹配会话，只含元数据：命中次数和命中消息的位置，最多 500 行。`--exclude <id>`、`--exclude-self <nonce>` 会把某个会话连同它的子代理和分叉一起排除 |
-| `mss show <id-prefix>` | 按结果里的 id 读取一个会话；`--around <n>` 从第 `n` 条消息附近开始读 |
+| `mss [search] [flags] <query>` | 搜索；可用 `--json`、`--harness`、`--project`、`--since`、`--role`、`--session`、`--limit`、`--all`、`--re`、`--no-refresh` |
+| `mss search --sessions --json <query>` | 列出全部匹配会话，只含元数据：命中次数和命中消息的位置，最多 500 行。`--sort updated` 按最后更新时间从新到旧排列；`--exclude <id>`、`--exclude-self <nonce>` 会把某个会话连同它的子代理和分叉一起排除 |
+| `mss show <id-prefix>` | 按结果里的 id 读取一个会话；`--around <n>` 从第 `n` 条消息附近开始读；`--brief` 每条消息一行头部（序号、角色、时间）+ 截断正文，便于快速浏览；`--no-refresh` 直接读现有索引，不先刷新 |
 | `mss ctx <query\|id-prefix>` | 取最佳匹配附近的一大段上下文，方便贴进对话 |
 | `mss last [n]` | 最近更新的会话 |
 | `mss sources` | mss 会读的每个数据源，以及会话数和消息数 |
