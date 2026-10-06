@@ -477,7 +477,16 @@ func cmdShow(dir string, rest []string, sourceInstance string) error {
 	if o.json {
 		return printSessionJSON(os.Stdout, dir, s, o.offset, o.limit, sourceInstance, refresh)
 	}
-	if o.sliced {
+	if o.brief {
+		// The brief is a window by construction: a 2,000-message session one
+		// line per message is not the page the flag exists to make, so the
+		// JSON default applies and the note says where the window sits.
+		total := len(s.Messages)
+		s.Messages = sliceMessages(s.Messages, o.offset, o.limit)
+		if line := showWindowNote(o.offset, len(s.Messages), total); line != "" {
+			fmt.Fprintln(os.Stderr, line)
+		}
+	} else if o.sliced {
 		// Both flags are documented for `show` and only the JSON path honoured
 		// them; the text output printed the whole session (#709).
 		total := len(s.Messages)
@@ -502,6 +511,13 @@ func cmdShow(dir string, rest []string, sourceInstance string) error {
 	// failure searched one they believed was whole (#2467).
 	if line := clippedMessageNote(dir, s); line != "" {
 		fmt.Fprintln(os.Stderr, line)
+	}
+	if o.brief {
+		if briefMatchCount(s.Messages, o.roles) == 0 && len(s.Messages) > 0 {
+			fmt.Fprintf(os.Stderr, "mss: no %s messages in this window — `--offset`/`--limit` move it over every role\n", strings.Join(o.roles, " or "))
+		}
+		printSessionBrief(os.Stdout, s, o)
+		return nil
 	}
 	search.PrintSession(os.Stdout, s)
 	return nil
@@ -645,6 +661,12 @@ type showOptions struct {
 	// noRefresh answers from the index as it was: the refresh pass is
 	// skipped and so is the write lock it takes.
 	noRefresh bool
+	// brief prints the compact scanning form instead of the transcript:
+	// briefLen is how many characters of each body survive, and roles (empty
+	// means all) says whose messages are printed.
+	brief    bool
+	briefLen int
+	roles    []string
 }
 
 // showLargeSession is where `mss show` mentions the flags that read a slice.
@@ -659,7 +681,22 @@ func parseShow(args []string) (showOptions, error) {
 			o.json = true
 		case "--no-refresh":
 			o.noRefresh = true
-		case "--harness", "--offset", "--limit", "--around":
+		case "--brief":
+			o.brief = true
+			o.briefLen = showBriefDefault
+			// An optional length: `--brief 300` cuts at 300 characters, and a
+			// bare --brief stops at the default. The id is never numeric, so
+			// nothing else can be mistaken for it.
+			if i+1 < len(args) {
+				if n, e := strconv.Atoi(args[i+1]); e == nil {
+					if n < 1 {
+						return o, fmt.Errorf("--brief needs a positive number of characters")
+					}
+					o.briefLen = n
+					i++
+				}
+			}
+		case "--harness", "--offset", "--limit", "--around", "--role":
 			if i+1 >= len(args) {
 				return o, fmt.Errorf("%s needs value", a)
 			}
@@ -670,6 +707,13 @@ func parseShow(args []string) (showOptions, error) {
 			}
 			if a == "--harness" {
 				o.harness = args[i]
+				continue
+			}
+			if a == "--role" {
+				if err := checkRole(args[i]); err != nil {
+					return o, err
+				}
+				o.roles = append(o.roles, args[i])
 				continue
 			}
 			n, e := strconv.Atoi(args[i])
@@ -706,6 +750,12 @@ func parseShow(args []string) (showOptions, error) {
 	}
 	if o.json && o.harness == "" {
 		return o, fmt.Errorf("show --json requires --harness for exact identity")
+	}
+	if o.brief && o.json {
+		return o, fmt.Errorf("show takes --brief or --json, not both — --brief is the compact text form of a window")
+	}
+	if len(o.roles) > 0 && !o.brief {
+		return o, fmt.Errorf("--role needs --brief — it keeps only the messages the brief prints")
 	}
 	if o.offsetSet && o.aroundSet {
 		return o, fmt.Errorf("show takes --around or --offset, not both")
@@ -2501,7 +2551,7 @@ var flagsOfOtherCommands = map[string]string{
 // wrong refusal.
 var (
 	indexFlags  = []string{"--rebuild", "--quiet"}
-	showFlags   = []string{"--json", "--harness", "--offset", "--limit", "--around", "--no-refresh"}
+	showFlags   = []string{"--json", "--harness", "--offset", "--limit", "--around", "--no-refresh", "--brief", "--role"}
 	doctorFlags = []string{"--json", "--deep"}
 )
 

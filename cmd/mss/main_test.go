@@ -279,6 +279,79 @@ func TestNoRefreshMarksTheAnswer(t *testing.T) {
 	}
 }
 
+// TestShowBriefTrimsAndFilters pins the compact form: one header per message
+// (index, role, time), bodies cut at the asked-for length with the command
+// that reads the whole one, and --role keeping only the messages asked for.
+func TestShowBriefTrimsAndFilters(t *testing.T) {
+	root, dir := cmdEnv(t)
+	long := strings.Repeat("x", 300)
+	claudeSession(t, root, "s1-aaaa",
+		claudeUser("s1-aaaa", "2026-01-02T03:04:05Z", "briefneedle first question "+long),
+		claudeAssistant("s1-aaaa", "2026-01-02T03:04:06Z", "briefneedle answer"),
+		claudeUser("s1-aaaa", "2026-01-02T03:04:07Z", "briefneedle second question"),
+	)
+	mustEnsure(t, dir)
+
+	out, _, err := runCaptured(t, func() error {
+		return cmdShow(dir, []string{"s1-aaaa", "--harness", "claude", "--brief", "20", "--limit", "10"}, "")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 6 {
+		t.Fatalf("brief printed %d lines, want 6 (three headers, three bodies):\n%s", len(lines), out)
+	}
+	fields := strings.Fields(lines[0])
+	if len(fields) != 3 || fields[0] != "[0]" || fields[1] != "user" {
+		t.Fatalf("header = %q, want [0] user <time>", lines[0])
+	}
+	if _, err := time.Parse(time.RFC3339, fields[2]); err != nil {
+		t.Fatalf("header time %q is not RFC3339: %v", fields[2], err)
+	}
+	if !strings.HasPrefix(lines[1], "briefneedle first qu") {
+		t.Fatalf("cut body = %q", lines[1])
+	}
+	if !strings.Contains(lines[1], "cut at 20 characters") ||
+		!strings.Contains(lines[1], "`mss show s1-aaaa --harness claude --around 0 --limit 1`") {
+		t.Fatalf("the cut body does not name the way to read it whole: %q", lines[1])
+	}
+	if lines[3] != "briefneedle answer" {
+		t.Fatalf("an uncut body was altered: %q", lines[3])
+	}
+
+	// --role keeps only the messages asked for.
+	out, _, err = runCaptured(t, func() error {
+		return cmdShow(dir, []string{"s1-aaaa", "--harness", "claude", "--brief", "--role", "user", "--limit", "10"}, "")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(out, "briefneedle"); n != 2 {
+		t.Fatalf("--role user printed %d bodies, want 2:\n%s", n, out)
+	}
+	if strings.Contains(out, "assistant") {
+		t.Fatalf("--role user leaked an assistant message:\n%s", out)
+	}
+}
+
+// TestBriefFlagRefusals pins the combinations that cannot mean anything.
+func TestBriefFlagRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"s1", "--brief", "--json", "--harness", "claude"}, "--brief or --json"},
+		{[]string{"s1", "--role", "user"}, "--role needs --brief"},
+		{[]string{"s1", "--brief", "0"}, "positive number"},
+	} {
+		_, err := parseShow(tc.args)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("parseShow(%v) = %v, want %q", tc.args, err, tc.want)
+		}
+	}
+}
+
 // TestNoRefreshRefusals pins what --no-refresh will not do: build an index
 // that is not there, and mean --rebuild.
 func TestNoRefreshRefusals(t *testing.T) {
