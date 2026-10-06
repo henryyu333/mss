@@ -419,16 +419,25 @@ func cmdShow(dir string, rest []string, sourceInstance string) error {
 	if err := checkHarness(&o.harness); err != nil {
 		return err
 	}
+	// One refresh per show, and it happens before either lookup. The
+	// --harness branch used to Ensure here and then fall into
+	// findByPrefixHarness, which Ensured a second time whenever the exact
+	// lookup missed — the ordinary `show <id-prefix> --harness name` call —
+	// so one answer ran the build twice and printed the update line twice.
+	//
+	// The refresh is the same pass the prefix form runs. Without it the
+	// exact-identity path read whatever was on disk, and a store below the
+	// redaction floor is fresh — so `show --harness` printed text this build
+	// would not write while `show <prefix>` re-read the sources first (#3617).
+	// A store that cannot be rebuilt — read-only, no space — falls through to
+	// the loader, which refuses and says why.
+	fresh := false
+	if err := ensureIndex(dir, "", false, os.Stderr); err == nil {
+		fresh = true
+	}
 	var s model.Session
 	var ok bool
 	if o.harness != "" {
-		// The same pass the prefix form runs. Without it the exact-identity
-		// path read whatever was on disk, and a store below the redaction
-		// floor is fresh — so `show --harness` printed text this build would
-		// not write while `show <prefix>` re-read the sources first (#3617).
-		// A store that cannot be rebuilt — read-only, no space — falls through
-		// to the loader, which refuses and says why.
-		_ = index.Ensure(dir, "", false, os.Stderr)
 		// Exact identity first — that is what --harness is for, and what
 		// --json requires. But the usage line documents an id *prefix*, and
 		// routing --harness straight to the exact lookup made every
@@ -436,10 +445,10 @@ func cmdShow(dir string, rest []string, sourceInstance string) error {
 		// no session matches while the same prefix without --harness worked.
 		s, ok, err = index.FindByIdentity(dir, o.harness, o.id)
 		if err == nil && !ok {
-			s, ok, err = findByPrefixHarness(dir, o.id, o.harness)
+			s, ok, err = findByPrefixHarness(dir, o.id, o.harness, fresh)
 		}
 	} else {
-		s, ok, err = findByPrefix(dir, o.id)
+		s, ok, err = findByPrefixAfterEnsure(dir, o.id, fresh)
 	}
 	if err != nil {
 		return err
@@ -596,6 +605,11 @@ func printSpawnEdges(w io.Writer, dir string, s model.Session) {
 // ChildrenOfSession is a thin seam so the surface can be tested without an
 // index on disk.
 var ChildrenOfSession = index.ChildrenOf
+
+// ensureIndex is index.Ensure as this package calls it on a read path: a seam
+// a test can use to count refreshes — `show` refreshed twice for one answer
+// and nothing else could see it happen.
+var ensureIndex = index.Ensure
 
 type showOptions struct {
 	id, harness   string
@@ -2102,7 +2116,19 @@ func noteAmbiguousPrefix(dir, id, action string) {
 }
 
 func findByPrefix(dir, p string) (model.Session, bool, error) {
-	if err := index.Ensure(dir, "", false, os.Stderr); err == nil {
+	fresh := false
+	if err := ensureIndex(dir, "", false, os.Stderr); err == nil {
+		fresh = true
+	}
+	return findByPrefixAfterEnsure(dir, p, fresh)
+}
+
+// findByPrefixAfterEnsure resolves an id prefix when the caller has already
+// refreshed — or decided not to. fresh means the index holds what a refresh
+// just wrote; otherwise the stores are read directly, so an index that cannot
+// be rebuilt — read-only, no space — still answers.
+func findByPrefixAfterEnsure(dir, p string, fresh bool) (model.Session, bool, error) {
+	if fresh {
 		if s, ok, err := index.FindByPrefix(dir, p); err == nil {
 			return s, ok, nil
 		}
@@ -2114,9 +2140,11 @@ func findByPrefix(dir, p string) (model.Session, bool, error) {
 }
 
 // findByPrefixHarness resolves an id prefix within one harness, so the
-// documented "mss show <id-prefix> --harness name" form works.
-func findByPrefixHarness(dir, p, harness string) (model.Session, bool, error) {
-	s, ok, err := findByPrefix(dir, p)
+// documented "mss show <id-prefix> --harness name" form works. fresh is the
+// caller's one refresh, already done: doing it here again is how show ran the
+// build twice for one answer.
+func findByPrefixHarness(dir, p, harness string, fresh bool) (model.Session, bool, error) {
+	s, ok, err := findByPrefixAfterEnsure(dir, p, fresh)
 	if err != nil || !ok {
 		return model.Session{}, false, err
 	}
