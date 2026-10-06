@@ -82,9 +82,10 @@ mss sources                        # 读取了哪些数据源、各有多少内�
 `mss` 设计为**只在明确要求时**运行：由人输入 `/mss <内容>`，或由脚本明确调用。它和记忆系统正好相反：没人要求时，什么都不搜、不注入、不记住；Agent 得出的结论也不会被保存。
 
 [`skills/mss/SKILL.md`](skills/mss/SKILL.md) 是配套的 skill：
-1. 用 `search --sessions` 列出候选会话；
-2. 用 `show --json --around` 读命中位置附近的原文；
-3. 按时间线汇报：每条结论注明 Agent、日期和会话 id，标出后来被推翻的决定和转述，并说明这次搜索没覆盖到的部分（JSON 结果里的 `coverage`）。
+1. 开头只刷新一次索引（`mss index --quiet`）；之后所有查询带 `--no-refresh`，不再刷新、不抢写锁；
+2. 用 `search --sessions --no-refresh --sort updated` 一次列出候选会话（最新在前）；
+3. 用 `show --brief --no-refresh` 批量浏览命中的窗口，再用 `show --json --around` 细读需要逐字引用的原文；
+4. 按时间线汇报：每条结论注明 Agent、日期和会话 id（引用逐字），标出后来被推翻的决定和转述，说明这次搜索没覆盖到的部分（JSON 结果里的 `coverage` 和索引最后刷新时间）；涉及"现在怎么样"的句子只来自当次只读核对，并单独成节。
 
 ## 许可证
 

@@ -99,11 +99,15 @@ Useful environment variables: `MSS_INDEX_DIR` (index location),
 opposite of a memory system: nothing is searched, injected, or remembered until
 someone asks, and nothing the agent concludes is saved.
 
-[`skills/mss/SKILL.md`](skills/mss/SKILL.md) is the skill that drives it: list
-the candidate sessions with `search --sessions`, read the originals at the
-matched positions with `show --json --around`, and report a timeline that cites
-harness, date and session id, marks later reversals and paraphrases, and states
-what the search could not cover (`coverage` in the JSON envelope).
+[`skills/mss/SKILL.md`](skills/mss/SKILL.md) is the skill that drives it:
+refresh the index once (`mss index --quiet`), then list the candidate sessions
+with `search --sessions --no-refresh --sort updated`, scan windows with
+`show --brief --no-refresh`, read the passages that matter with
+`show --json --around`, and report a timeline that cites harness, date and
+session id (and quotes verbatim), marks later reversals and paraphrases,
+states what the search could not cover (`coverage` in the JSON envelope), and
+keeps any "how it stands now" sentence tied to a current read-only check
+instead of to the history.
 
 ## License
 
