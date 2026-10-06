@@ -20,12 +20,17 @@ hide: true
 
 2. **检索词**：自行扩展同义词、中英文变体和相关名词，准备 2–3 组查询。
 
-3. **列候选**：先生成一个本轮 nonce，再搜候选全集：
+3. **列候选**：先单独一步生成 nonce 并**读出它的字面值**，再把字面值原样写进每条命令：
    ```bash
-   NONCE="mss-self-$(uuidgen | tr A-F a-f | cut -c1-12)"   # 或等价的随机串
-   mss search --sessions --exclude-self "$NONCE" --json "<query>"
+   uuidgen | tr 'A-F' 'a-f' | cut -c1-12        # 例：7f3a91c2d4e8
    ```
-   - nonce 必须是本轮独有、不会在别处出现的字符串；它通过这条命令行被写进本会话的转录，mss 据此把**当前会话**连同它的子代理和分叉一起排除。之后本轮每次 mss 调用都带同一个 nonce。
+   拿到值后**写字面值，不要用变量**，且命令必须是**单行**：
+   ```bash
+   mss search --sessions --exclude-self 7f3a91c2d4e8 --json "<query>"
+   ```
+   - 原因：mss 靠转录里的**命令行原文**认出当前窗口；命令行里只有 `NONCE=$(uuidgen …)` 这样的赋值时，标记的值没进转录，mss 找不到。必须先读出值、再原样写进命令。
+   - **单行是硬要求**：mss 有意不索引多行命令（heredoc、多行脚本被当作"说的都在产出里"），带 nonce 的多行命令会让排除**永远失效**。要解析 JSON 就把 python 写成同一行的 `python3 -c '…'`，不要用 heredoc 或多行管道。
+   - 本轮每条 `mss search` 都带同一个字面 nonce。若 coverage 显示没排除（个别 harness 落盘时序不同），带上同一字面 nonce 再搜一次即可——第一条命令行此时已写入转录。
    - 另有要排除的 session 用 `--exclude <id-or-prefix>`（可重复），它会连带排除其子代理与分叉。
    - 读信封：`match` 是 `found` / `candidates` / `none`；`coverage.self_requested` 存在而 `self_excluded` 缺席表示当前会话没能排除（转录里还没写入这条命令行，此时 `complete` 为 `false`），汇报时必须说明"当前会话未排除"，不得静默。`coverage` 里 `unread`（存在的源没读到；没有该 harness 的数据不算） / `skipped` / `clipped` 说明本次检索没覆盖的部分，`complete: true` 表示无缺口。
    - `sessions` 是匹配全集（`found` 时不受条数上限，最多 500 行并以 `capped` 说明），每行有 session 元数据、`hit_count` 和 `matched_indices`（记录序号，与 `show` 同一套编号；`--re` 或无检索词的查询只有 `hit_count`）。
@@ -40,6 +45,7 @@ hide: true
 5. **汇报**：
    - 按时间线写；每条结论附 harness、日期、session id 和原文引用。
    - 历史原话和基于历史的推断分开写，不得混为一谈。
+   - **原始 vs 转述**：同一线索在多处出现时，只有「用户消息里、日期最早」的那次算原始讨论；之后 agent 消息里的同句或改写是转述，标注「转述」并指明它指向哪次原始讨论，不得当成独立证据。最早一次本身就是 agent 说的就注明，不得伪装成用户原话。
    - 被后来推翻的决定标"已被 <session/日期> 推翻"。
    - 结尾写覆盖范围：搜了哪些词和项目、读了几个 session、`coverage` 里的缺口、当前会话是否已排除。
 
