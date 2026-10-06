@@ -19,7 +19,7 @@ func TestSearchJSONKeysMatchTheDocumentedContract(t *testing.T) {
 		// envelope
 		"schema_version": true, "tier": true, "total": true, "capped": true,
 		"policy_withheld": true, "hits": true, "fuzzy": true, "stemmed": true,
-		"strict":   true,
+		"strict":   true, "match": true, "produced_by": true,
 		"semantic": true, "variants": true,
 		// hit
 		"session": true, "count": true, "snippets": true, "score": true,

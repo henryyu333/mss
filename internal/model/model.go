@@ -11,6 +11,11 @@ type Message struct {
 	Role string    `json:"role"`
 	Text string    `json:"text"`
 	Time time.Time `json:"time"`
+	// Index is the message's 0-based position among the session's stored
+	// records — the numbering `mss show --offset` and `mss show --around`
+	// slice by. Filled only when the reader asked for positions: a bare
+	// session load leaves it nil so it stays out of the JSON.
+	Index *int `json:"index,omitempty"`
 }
 
 // MarshalJSON leaves the time out of a message the transcript never stamped.

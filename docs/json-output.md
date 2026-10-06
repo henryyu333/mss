@@ -83,9 +83,12 @@ Every search returns one envelope:
 ```json
 {
   "schema_version": 2,
+  "produced_by": "mss",
+  "match": "found",
   "tier": "exact",
   "total": 391,
   "capped": true,
+  "coverage": {"complete": true},
   "hits": [
   {
     "session": {
@@ -97,7 +100,7 @@ Every search returns one envelope:
       "updated": "2026-01-02T03:10:00Z",
       "source": {"origin": "local", "instance": "workstation"},
       "messages": [
-        {"role": "user", "text": "why does the parser fail on …", "time": "2026-01-02T03:04:05Z"}
+        {"role": "user", "text": "why does the parser fail on …", "time": "2026-01-02T03:04:05Z", "index": 17}
       ]
     },
     "count": 2,
@@ -109,6 +112,28 @@ Every search returns one envelope:
   }
   ]
 }
+```
+
+`produced_by` is `"mss"` on every envelope. A copy of this answer sitting
+inside a later transcript is mss's own output, not something a person said —
+the marker is what keeps a later search from finding it again as evidence.
+
+`match` says what the answer is: `found` when sessions matched the query,
+`candidates` when nothing matched and the list is the relevance ranking,
+`none` when there is nothing. It restates what `tier` and `strict` already
+say, in the word a consumer decides on: `relevance` with no strict hits is
+`candidates`, while a thin strict head inside one stays `found`.
+
+`coverage` is present on every answer and reports what the refresh could not
+see: `unread` names stores nothing was read from (with the reason, for
+example `deepseek: zstd CLI not found`), `skipped` counts malformed records
+and failed files per harness, `clipped` counts messages stored short of the
+transcript, and `complete` is true only when none of those happened — and a
+requested `--exclude-self` succeeded (`self_requested`/`self_excluded`).
+
+Every message in a hit carries `index` — its 0-based position in the
+session's records, the numbering `mss show --offset` and `--around` read —
+so a consumer walks from the answer to the passage without re-counting.
 ```
 
 The envelope's `tier` and each hit's `tier` are the same idea at two scopes,
@@ -142,6 +167,7 @@ session holds and `messages_capped` says the list is a selection; both are
 omitted when the whole session fits. `snippets` is unchanged: the two or three
 excerpts the text output prints.
 
+
 A hit used to carry its session's whole message list, which made the size of an
 answer the size of the reader's longest transcript: on a 2,716-session store one
 relevance answer was 136 MB over 50 hits and 140,841 messages, and encoding it
@@ -154,6 +180,42 @@ that cap (see [`hits` is not a fixed
 window](#hits-is-not-a-fixed-window-across-tiers)). Every session has
 `source.origin: "local"`; `source.instance` carries the stable operator-chosen
 `MSS_SOURCE_INSTANCE` name when one is configured.
+
+### `mss search --sessions`
+
+The candidate list answers the other question a search can ask — which
+sessions matched — without the excerpts or the hit cap. It forces JSON:
+
+```json
+{
+  "schema_version": 2,
+  "produced_by": "mss",
+  "match": "found",
+  "query": "needle",
+  "total": 3,
+  "sessions": [
+    {
+      "session": {"harness": "deepseek", "id": "aaaa", "project": "tmp/altu", "…": "…"},
+      "hit_count": 4,
+      "matched_indices": [0, 1, 2, 3]
+    }
+  ],
+  "coverage": {"complete": true}
+}
+```
+
+`sessions` is the whole matching set after the same filters (`--harness`,
+`--project`, `--since`, `--role`, `--exclude`), ranked order preserved.
+`hit_count` is how many records matched; `matched_indices` are their record
+numbers — each feeds `mss show <id> --harness <h> --around N` directly.
+
+`--exclude <id-or-prefix>` is repeatable and removes the session plus its
+lineage — the subagents it spawned and the forks that continue it — because
+excluding one alone leaves the same conversation in the answer under another
+id. `--exclude-self <nonce>` resolves the session that asked: a skill passes
+a unique token it embedded in its own invocation, the session carrying it is
+excluded with its lineage, and `coverage.self_excluded` reports whether the
+token was found.
 
 ### The session object
 
@@ -228,5 +290,9 @@ return redacted index content in a bounded message window; the default limit is
 }
 ```
 
-Use `--offset N --limit N` to page without parsing human output. An offset past
-the end returns a session with no `messages` key and a `returned` count of zero.
+Use `--offset N --limit N` to page without parsing human output, or
+`--around N` to centre the window on record number N — the same `index`
+every message in a search hit carries; `--offset` and `--around` are
+exclusive. `window.clipped` is present and true when the window holds a
+message the index stored short of the transcript. An offset past the end
+returns a session with no `messages` key and a `returned` count of zero.

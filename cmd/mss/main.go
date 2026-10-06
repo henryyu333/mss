@@ -454,7 +454,7 @@ func cmdShow(dir string, rest []string, sourceInstance string) error {
 		return err
 	}
 	if o.json {
-		return printSessionJSON(os.Stdout, s, o.offset, o.limit, sourceInstance)
+		return printSessionJSON(os.Stdout, dir, s, o.offset, o.limit, sourceInstance)
 	}
 	if o.sliced {
 		// Both flags are documented for `show` and only the JSON path honoured
@@ -601,10 +601,17 @@ type showOptions struct {
 	id, harness   string
 	json          bool
 	offset, limit int
+	// around is the record index a window was asked to centre on; it folds
+	// into offset before slicing so the note and the JSON agree.
+	around    int
+	aroundSet bool
 	// sliced records that the reader asked for a slice, as opposed to the
 	// JSON default: applying 50 to the text output would silently truncate
 	// `mss show` for everyone who reads a session whole (#709).
 	sliced bool
+	// offsetSet says --offset was given, because around+offset is a
+	// contradiction the parse refuses rather than resolves.
+	offsetSet bool
 }
 
 // showLargeSession is where `mss show` mentions the flags that read a slice.
@@ -617,7 +624,7 @@ func parseShow(args []string) (showOptions, error) {
 		switch a := args[i]; a {
 		case "--json":
 			o.json = true
-		case "--harness", "--offset", "--limit":
+		case "--harness", "--offset", "--limit", "--around":
 			if i+1 >= len(args) {
 				return o, fmt.Errorf("%s needs value", a)
 			}
@@ -634,10 +641,16 @@ func parseShow(args []string) (showOptions, error) {
 			if e != nil || n < 0 || (a == "--limit" && n == 0) {
 				return o, fmt.Errorf("%s needs a positive integer", a)
 			}
-			if a == "--offset" {
+			switch a {
+			case "--offset":
 				o.offset = n
+				o.offsetSet = true
 				o.sliced = true
-			} else {
+			case "--around":
+				o.around = n
+				o.aroundSet = true
+				o.sliced = true
+			default:
 				o.limit = n
 				o.sliced = true
 			}
@@ -658,6 +671,18 @@ func parseShow(args []string) (showOptions, error) {
 	}
 	if o.json && o.harness == "" {
 		return o, fmt.Errorf("show --json requires --harness for exact identity")
+	}
+	if o.offsetSet && o.aroundSet {
+		return o, fmt.Errorf("show takes --around or --offset, not both")
+	}
+	if o.aroundSet {
+		// The window centres on the record: `--around 12 --limit 5` shows
+		// indices 10-14, and --limit is the whole width, not "messages each
+		// side".
+		o.offset = o.around - o.limit/2
+		if o.offset < 0 {
+			o.offset = 0
+		}
 	}
 	if o.limit > 200 {
 		return o, fmt.Errorf("show --limit must not exceed 200")
@@ -1020,10 +1045,44 @@ func runSearch(dir string, args []string, sourceInstance string) error {
 
 func searchWithOptions(dir string, args []string, sourceInstance string, bare bool) error {
 	force := false
+	sessionsMode := false
+	var excludeIDs []string
+	var excludeSelf string
 	var filtered []string
-	for _, a := range args {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			// Everything after -- is the query verbatim, even words spelled
+			// like these flags: `mss search -- --exclude` asks for the text.
+			filtered = append(filtered, args[i:]...)
+			break
+		}
 		if a == "--rebuild" || a == "-rebuild" {
 			force = true
+			continue
+		}
+		if a == "--sessions" {
+			sessionsMode = true
+			continue
+		}
+		if strings.HasPrefix(a, "--exclude=") {
+			excludeIDs = append(excludeIDs, strings.TrimPrefix(a, "--exclude="))
+			continue
+		}
+		if strings.HasPrefix(a, "--exclude-self=") {
+			excludeSelf = strings.TrimPrefix(a, "--exclude-self=")
+			continue
+		}
+		if a == "--exclude" || a == "--exclude-self" {
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return fmt.Errorf("%s needs value", a)
+			}
+			i++
+			if a == "--exclude" {
+				excludeIDs = append(excludeIDs, args[i])
+			} else {
+				excludeSelf = args[i]
+			}
 			continue
 		}
 		filtered = append(filtered, a)
@@ -1031,6 +1090,16 @@ func searchWithOptions(dir string, args []string, sourceInstance string, bare bo
 	o, err := parseSearch(filtered)
 	if err != nil {
 		return err
+	}
+	o.ExcludeIDs = excludeIDs
+	o.ExcludeSelf = excludeSelf
+	o.Sessions = sessionsMode
+	if sessionsMode {
+		// The candidate list is a machine answer by design: the point is a
+		// set a reader walks, and text columns truncate what a session id
+		// needs whole. --json does not change the envelope, which is already
+		// JSON-shaped.
+		o.JSON = true
 	}
 	harnessRaw := o.Harness
 	if err := checkHarness(&o.Harness); err != nil {
@@ -1048,6 +1117,31 @@ func searchWithOptions(dir string, args []string, sourceInstance string, bare bo
 			return ensureError(dir, err)
 		}
 		fmt.Fprintf(os.Stderr, "mss: answering from the index as it was — %v\n", ensureError(dir, err))
+	}
+	// Exclusions resolve after the refresh: an id found a moment ago by the
+	// session asking is the id the answer must not contain, and resolving it
+	// first would miss the session that is writing it.
+	selfFound := true
+	if len(o.ExcludeIDs) > 0 || o.ExcludeSelf != "" {
+		var expanded map[string]bool
+		expanded, selfFound, err = resolveSearchExcludes(dir, o.ExcludeIDs, o.ExcludeSelf)
+		if err != nil {
+			return err
+		}
+		if o.ExcludeSessions == nil {
+			o.ExcludeSessions = map[string]bool{}
+		}
+		for id := range expanded {
+			o.ExcludeSessions[id] = true
+		}
+	}
+	o.Coverage = index.SearchCoverage(dir)
+	if o.ExcludeSelf != "" {
+		o.Coverage.SelfRequested = true
+		o.Coverage.SelfExcluded = selfFound
+		if !selfFound {
+			o.Coverage.Complete = false
+		}
 	}
 	result, err := index.SearchWithRecoveryDetailed(dir, o, os.Stderr)
 	if err != nil {
@@ -1187,11 +1281,30 @@ func searchWithOptions(dir string, args []string, sourceInstance string, bare bo
 			fmt.Fprint(os.Stderr, note)
 		}
 	}
+	if sessionsMode {
+		// The candidate list answers a different question from the hits:
+		// which sessions matched, and where — for a reader that will open
+		// the transcript itself. The same filtering and policy applied to
+		// the hits applies to the list, so nothing excluded or denied leaks
+		// back in by taking the other door.
+		matchIdx, err := sessionsMatchIndices(dir, ss, o, result)
+		if err != nil {
+			return err
+		}
+		return printSessionsJSON(os.Stdout, ss, matchIdx, o)
+	}
 	// The window this is being printed into, so the lines can be budgeted
 	// rather than assumed 80 wide. Only for a terminal: a pipe gets the whole
 	// line, since a script reading mss wants the text and not the layout
 	// (#604).
 	o.Width = printableWidth(os.Stdout)
+	// JSON hit messages carry their record index — the numbering
+	// `show --around` reads — so a consumer can walk from the answer to the
+	// passage without re-searching the session. Text keeps what it always
+	// printed.
+	if o.JSON {
+		annotateHitIndices(dir, hits)
+	}
 	search.Print(os.Stdout, hits, o)
 	// A stamp that has not happened is a date the reader cannot use, and recency
 	// is half of what puts a hit where it is. The listing has said so since
@@ -2266,13 +2379,14 @@ var flagsOfOtherCommands = map[string]string{
 // wrong refusal.
 var (
 	indexFlags  = []string{"--rebuild", "--quiet"}
-	showFlags   = []string{"--json", "--harness", "--offset", "--limit"}
+	showFlags   = []string{"--json", "--harness", "--offset", "--limit", "--around"}
 	doctorFlags = []string{"--json", "--deep"}
 )
 
 var searchFlags = []string{
-	"--json", "--re", "--all", "--rebuild",
+	"--json", "--re", "--all", "--rebuild", "--sessions",
 	"--harness", "--project", "--since", "--role", "--limit", "--session",
+	"--exclude", "--exclude-self",
 }
 
 // nearestSearchFlag names the search flag a token was probably meant to be.
@@ -3094,4 +3208,115 @@ func capTierHits(hits []search.Hit, o search.Options) ([]search.Hit, bool) {
 	// same two flags mean opposite things depending on which tier answered
 	// (review of #3345).
 	return search.CapHits(hits, o.Limit, false)
+}
+
+// resolveSearchExcludes turns what the flags named into the set of session
+// ids the search must not return: each --exclude id-or-prefix, plus whatever
+// session the --exclude-self nonce was written into. The set is then widened
+// through the lineage — a session's subagents and forks are the same
+// conversation under other ids, and excluding one of them alone leaves the
+// answer holding the rest.
+//
+// selfFound says whether the nonce matched anything; a miss is reported as
+// coverage, not an error — the session asking may simply not be indexed yet.
+func resolveSearchExcludes(dir string, ids []string, nonce string) (map[string]bool, bool, error) {
+	byPrefix := index.SessionIDsByPrefix(dir, ids)
+	var resolved []string
+	for _, p := range ids {
+		hits := byPrefix[p]
+		switch len(hits) {
+		case 0:
+			return nil, false, fmt.Errorf("--exclude %q matches no session", p)
+		case 1:
+			resolved = append(resolved, hits[0])
+		default:
+			// Leaving one of several matches in is the pollution the flag
+			// exists to remove, so an ambiguous prefix excludes them all and
+			// says so rather than guessing one.
+			fmt.Fprintf(os.Stderr, "mss: --exclude %q is ambiguous — excluding all %d matches\n", p, len(hits))
+			resolved = append(resolved, hits...)
+		}
+	}
+	return index.ExpandExclude(dir, resolved, nonce)
+}
+
+// sessionsMatchIndices computes, per served session, where the query landed —
+// the record positions `mss show --around` can jump straight to. Each tier
+// answers "which records counted" its own way: the error signature lines for
+// an error hit, the relevance terms for a ranked one, the query's own check
+// for the rest. The positions are the transcript's numbering, not the
+// filtered list's, so a record the policy keeps out still counts its slot.
+func sessionsMatchIndices(dir string, ss []model.Session, o search.Options, result index.SearchResult) (map[string][]int, error) {
+	keys := make(map[string]bool, len(ss))
+	for _, s := range ss {
+		keys[s.Harness+":"+s.ID] = true
+	}
+	var match func(index.Record) bool
+	switch {
+	case result.Tier == search.TierError:
+		match = index.ErrorSigRecordMatcher(o)
+	case result.Tier == search.TierRelevance:
+		terms := index.RelevanceMatchTerms(o.Query)
+		match = func(r index.Record) bool {
+			low := strings.ToLower(r.Text)
+			for _, t := range terms {
+				if strings.Contains(low, t) {
+					return true
+				}
+			}
+			return false
+		}
+	default:
+		match = index.QueryRecordMatcher(o, result.Variants)
+	}
+	return index.MatchedRecordPositions(dir, keys, o, match)
+}
+
+// annotateHitIndices marks every served message of every hit with its record
+// index — the position `mss show --offset` and `--around` count by. The hits
+// arrive holding a subset of the session (match windows, servable records),
+// so the numbering is recovered by walking each session's full record list
+// and merge-joining: the subset keeps transcript order, and a duplicated
+// message lands on the next position the join cursor has not passed.
+func annotateHitIndices(dir string, hits []search.Hit) {
+	seen := map[string]bool{}
+	var ids []index.Identity
+	for _, h := range hits {
+		id := index.Identity{Harness: h.Session.Harness, ID: h.Session.ID}
+		if !seen[id.Harness+":"+id.ID] {
+			seen[id.Harness+":"+id.ID] = true
+			ids = append(ids, id)
+		}
+	}
+	fulls, err := index.FindManyByIdentity(dir, ids)
+	if err != nil {
+		return
+	}
+	byKey := make(map[string][]model.Message, len(fulls))
+	for i := range fulls {
+		byKey[fulls[i].Harness+":"+fulls[i].ID] = fulls[i].Messages
+	}
+	for hi := range hits {
+		full := byKey[hits[hi].Session.Harness+":"+hits[hi].Session.ID]
+		j := 0
+		for mi := range hits[hi].Session.Messages {
+			m := hits[hi].Session.Messages[mi]
+			for j < len(full) && !sameMessageTriple(full[j], m) {
+				j++
+			}
+			if j >= len(full) {
+				break
+			}
+			idx := j
+			hits[hi].Session.Messages[mi].Index = &idx
+			j++
+		}
+	}
+}
+
+// sameMessageTriple is the join's equality: role, text and stamp. A session
+// could in principle carry two records identical on all three — the join
+// assigns them in order, which is the only honest answer the data gives.
+func sameMessageTriple(a, b model.Message) bool {
+	return a.Role == b.Role && a.Text == b.Text && a.Time.Equal(b.Time)
 }

@@ -59,10 +59,17 @@ func MatchesParts(text string, terms, phrases []string, variants map[string][]st
 
 type searchJSONEnvelope struct {
 	SchemaVersion int `json:"schema_version"`
-	// Match is the set-level tier. "relevance" means nothing matched and these
-	// are the nearest sessions — a different kind of answer, and the one a
-	// caller counting recall has to exclude. It used to be readable only as a
-	// sentence on stderr.
+	// ProducedBy names what wrote this answer, so a copy of it sitting
+	// inside a later transcript can be told from the transcript's own
+	// words. "mss" on every envelope.
+	ProducedBy string `json:"produced_by"`
+	// Match says what the answer is: "found" means sessions matched the
+	// query, "candidates" means nothing matched and the sessions are ranked
+	// by relevance instead, "none" means there is nothing to show. A caller
+	// reading hit text without it cannot tell evidence from a guess.
+	Match string `json:"match"`
+	// Tier is the set-level tier kept from the original envelope. "relevance"
+	// is how match:"candidates" reads on the wire today.
 	Tier string `json:"tier"`
 	// Total is how many sessions matched before the cap; Capped says whether
 	// the cap hid any. Counting the returned hits alone measures the cap.
@@ -80,6 +87,23 @@ type searchJSONEnvelope struct {
 	Stemmed  bool                `json:"stemmed,omitempty"`
 	Semantic bool                `json:"semantic,omitempty"`
 	Variants map[string][]string `json:"variants,omitempty"`
+	// Coverage is what this answer could not see — unread stores, skipped
+	// records, cut messages — filled by the caller, which has the index and
+	// the refresh; this package only knows how to say it.
+	Coverage *query.Coverage `json:"coverage,omitempty"`
+}
+
+// matchLabel maps the tier and strictness onto the three values the envelope
+// promises: a strict head on the relevance tier is still an answer, an
+// unmerged relevance ranking is candidates, anything empty is none.
+func matchLabel(o Options, hits int) string {
+	if hits == 0 {
+		return "none"
+	}
+	if o.Tier == TierRelevance && o.Strict == 0 {
+		return "candidates"
+	}
+	return "found"
 }
 
 type Hit struct {
@@ -133,6 +157,15 @@ type Hit struct {
 	// quoted are the messages the rendered excerpts were cut from, kept so a
 	// caller can find where in the session the hit is about.
 	quoted []string
+}
+
+// Matched returns the indices into Session.Messages of the messages that
+// carried the match — on the relevance tier, every message holding a term,
+// not just the two shown as snippets. Positions are within the session as it
+// was handed to the scorer; a caller holding the whole transcript maps them
+// onto the record numbering itself.
+func (h Hit) Matched() []int {
+	return h.matched
 }
 
 // QuotedMessages are the texts of the messages this hit's excerpts were cut
@@ -1494,6 +1527,8 @@ func Print(w io.Writer, hits []Hit, o Options) {
 		// two contracts and could not tell which it had until it looked.
 		_ = json.NewEncoder(w).Encode(searchJSONEnvelope{
 			SchemaVersion: jsonout.Version,
+			ProducedBy:    "mss",
+			Match:         matchLabel(o, len(hits)),
 			Tier:          setTier(o),
 			Total:         o.Total,
 			Strict:        o.Strict,
@@ -1504,6 +1539,7 @@ func Print(w io.Writer, hits []Hit, o Options) {
 			Stemmed:       o.Stemmed,
 			Semantic:      o.Semantic,
 			Variants:      o.FuzzyVariants,
+			Coverage:      o.Coverage,
 		})
 		return
 	}
