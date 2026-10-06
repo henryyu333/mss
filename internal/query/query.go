@@ -97,6 +97,24 @@ type Options struct {
 	// RecallWorn maps session id -> agent recall count; filled by callers
 	// from the usage log, consumed as a bounded ranking boost.
 	RecallWorn map[string]int `json:"-"`
+	// Sessions asks for the candidate-list answer rather than the ranked one:
+	// every matching session's metadata and where the query landed in it,
+	// without the excerpts or the hit cap. A retrieval mode, not a filter.
+	Sessions bool `json:"-"`
+	// ExcludeIDs are session ids or id prefixes the reader asked to leave
+	// out; the caller resolves them (with their lineage) into
+	// ExcludeSessions before the search runs. Kept here so the envelope can
+	// say what was excluded.
+	ExcludeIDs []string `json:"-"`
+	// ExcludeSelf is a nonce the caller embedded in its own `mss` invocation
+	// so the session asking can be found and excluded by content rather than
+	// by guessing "the newest one". Resolved the same way as ExcludeIDs;
+	// when no session carries it the coverage report says so.
+	ExcludeSelf string `json:"-"`
+	// Coverage is what this answer did not see: unread stores, skipped
+	// records, truncated messages. The caller fills it after the refresh;
+	// nil means "not reported".
+	Coverage *Coverage `json:"-"`
 	// Now anchors relative-time phrases in the query ("a week ago"); zero
 	// means the moment of the search.
 	Now time.Time `json:"-"`
@@ -282,4 +300,38 @@ func Tokens(s string) []string {
 		out = append(out, tok)
 	}
 	return out
+}
+
+// Coverage is what a search did not see, said rather than left silent. A
+// consumer deciding how far to trust an answer reads this before the hits:
+// a store mss could not read is a hole in the evidence, not a negative.
+type Coverage struct {
+	// Unread names stores nothing was read from this pass, with why:
+	// "deepseek: zstd CLI not found". A store that read partially is not
+	// here — its missing part is under Skipped.
+	Unread []string `json:"unread,omitempty"`
+	// Skipped holds per-harness counts of records the pass could not use:
+	// malformed lines for JSONL stores, unusable rows for database ones,
+	// and files that failed to read outright.
+	Skipped map[string]SkippedIngest `json:"skipped,omitempty"`
+	// Clipped is how many stored messages were cut at the index's text cap:
+	// searchable up to the cut, silent past it.
+	Clipped int `json:"clipped,omitempty"`
+	// SelfRequested says an --exclude-self nonce was given, SelfExcluded
+	// that a session carrying it was found and excluded (with its lineage).
+	// A requested self-exclusion that found nothing is a coverage gap: the
+	// answer may contain the session that asked.
+	SelfRequested bool `json:"self_requested,omitempty"`
+	SelfExcluded  bool `json:"self_excluded,omitempty"`
+	// Complete is true when nothing above is non-empty and a requested
+	// self-exclusion succeeded — the answer covered everything it could.
+	Complete bool `json:"complete"`
+}
+
+// SkippedIngest is one store's unread-record count for Coverage.Skipped.
+type SkippedIngest struct {
+	// Records is lines or rows the harness's own count could not use.
+	Records int `json:"records,omitempty"`
+	// Files is whole transcripts that failed to read.
+	Files int `json:"files,omitempty"`
 }

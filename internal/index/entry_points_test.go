@@ -1,13 +1,8 @@
 package index
 
 import (
-	"io"
-	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
-
-	"github.com/henryyu333/mss/internal/query"
 )
 
 // The PreToolUse warning asks by command shape: a run that failed before is
@@ -59,54 +54,6 @@ func TestUpToDateFollowsTheTranscripts(t *testing.T) {
 	c.appendTurn("app", 1, 5, "go vet ./...", "./store.go:12:2: undefined: Flock")
 	if ok, n := UpToDate(dir, ""); ok || n != 2 {
 		t.Errorf("after a transcript grew: UpToDate = %v, %d, want false, 2", ok, n)
-	}
-}
-
-// A search inside a tool call never waits: a held lock reports busy, a free
-// one refreshes the index, and a store whose lock cannot be written at all is
-// answered from as it stands (#1804).
-func TestEnsureForSearchNoWait(t *testing.T) {
-	c, tmp := newCFStore(t)
-	c.write("app", 0, "fix the store test")
-	dir := filepath.Join(tmp, "locked", "idx")
-	o := query.Options{Query: "store", All: true}
-
-	unlock, ok, err := tryLockDir(dir)
-	if err != nil || !ok {
-		t.Fatalf("taking the lock: %v %v", ok, err)
-	}
-	busy, err := EnsureForSearchNoWait(dir, o, io.Discard)
-	unlock()
-	if err != nil || !busy {
-		t.Fatalf("with the lock held: busy=%v err=%v, want busy", busy, err)
-	}
-	if HasManifest(dir) {
-		t.Fatal("a call that reported busy built the index anyway")
-	}
-
-	busy, err = EnsureForSearchNoWait(dir, o, io.Discard)
-	if err != nil || busy {
-		t.Fatalf("with the lock free: busy=%v err=%v", busy, err)
-	}
-	if ok, n := UpToDate(dir, ""); !ok || n != 1 {
-		t.Errorf("after the refresh: UpToDate = %v, %d, want true, 1", ok, n)
-	}
-
-	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
-		return
-	}
-	_ = os.Remove(dir + ".lock")
-	locked := filepath.Dir(dir)
-	if err := os.Chmod(locked, 0o555); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
-	if !lockUnwritable(dir) {
-		t.Error("a lock in a read-only directory reads as writable")
-	}
-	busy, err = EnsureForSearchNoWait(dir, o, io.Discard)
-	if err != nil || busy {
-		t.Errorf("read-only store: busy=%v err=%v, want an answer now", busy, err)
 	}
 }
 

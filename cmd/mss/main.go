@@ -999,37 +999,17 @@ func cmdSearch(dir string, rest []string, sourceInstance string) error {
 	return runSearch(dir, rest, sourceInstance)
 }
 
-// ensureForCLISearch keeps a search off the rewrite path. Appending the new
-// bytes of a grown transcript is cheap and stays inline; work that rewrites the
-// index — a store that rewrote itself, a removed file, a harness with no append
-// path — is handed to the detached warmup, and the search answers from the
-// index it already has. MCP made that trade at #1305 because a rebuild blows
-// the client's timeout; the CLI kept waiting, and on a 1.7 GB store a query
-// that matched nothing took 194 s while a live Grok session grew (#1521).
+// ensureForCLISearch refreshes the index before the search answers. An
+// explicit invocation is willing to wait: the alternative — answering from
+// what the index used to hold — reported the same question as unasked every
+// time a harness wrote between `mss index` and the search that followed it.
+// A long refresh narrates itself on stderr through `progress`.
 //
-// `--rebuild` still waits: someone who asked for the rebuild wants its result.
+// `--rebuild` means the same thing it always has: force, then wait.
 func ensureForCLISearch(dir string, o search.Options, force bool, progress io.Writer) error {
-	if force {
-		return index.EnsureForSearch(dir, o, true, progress)
-	}
-	stale, err := index.EnsureForSearchStale(dir, o, progress)
-	if err != nil {
-		return err
-	}
-	if stale {
-		// Only when there is an index to answer from. On a first build there
-		// is not, and the two lines contradicted each other on the worst run
-		// to contradict anything (#3574).
-		if index.ReadableSnapshot(dir) {
-			fmt.Fprintln(progress, "mss: answering from the index as it was — run `mss index` to refresh")
-		}
-	}
-	return nil
+	return index.EnsureForSearch(dir, o, force, progress)
 }
 
-// runBareSearch is `mss <words>` — the form where the first word stood where a
-// command name goes. That is the only form the mistyped-command hint is about:
-// `mss search doctro` is someone searching for the word (#2197).
 func runBareSearch(dir string, args []string, sourceInstance string) error {
 	return searchWithOptions(dir, args, sourceInstance, true)
 }

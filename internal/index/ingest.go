@@ -109,7 +109,7 @@ func mergeIngestDiag(m *Manifest) {
 		// The clip count for this pass was recorded during redaction, which
 		// runs before this fold, so it is not something to start over.
 		if ok && e.Clipped > 0 {
-			m.IngestFiles[p] = FileIngest{Clipped: e.Clipped, ClippedSessions: e.ClippedSessions}
+			m.IngestFiles[p] = FileIngest{Clipped: e.Clipped, ClippedSessions: e.ClippedSessions, ClippedMsgIdx: e.ClippedMsgIdx}
 			continue
 		}
 		delete(m.IngestFiles, p)
@@ -330,46 +330,6 @@ func EnsureForSearch(dir string, o query.Options, force bool, progress io.Writer
 	return ensureLocked(dir, o, force, progress)
 }
 
-// EnsureForSearchNoWait is EnsureForSearch for a caller that must answer inside
-// somebody's tool call: it takes the lock or reports that another process holds
-// it, in one attempt. Checking RebuildInProgress and then calling the blocking
-// Ensure asked the same question twice, a lock acquisition apart, and a rebuild
-// starting in that window was waited out inside the call (#1804).
-func EnsureForSearchNoWait(dir string, o query.Options, progress io.Writer) (busy bool, err error) {
-	if dir == "" {
-		dir = DefaultDir()
-	}
-	unlock, ok, err := tryLockDir(dir)
-	if err != nil {
-		return false, err
-	}
-	if !ok {
-		// tryLockDir reports "no lock" for two different things: someone else
-		// holds it, and this machine cannot write the lock file at all. Only
-		// the first is a refresh to wait for. A read-only index — a container
-		// mount, a locked-down machine — answers every question asked of it,
-		// and telling the caller to come back later would be a wait that never
-		// ends.
-		if lockUnwritable(dir) && HasManifest(dir) {
-			return false, nil
-		}
-		return true, nil
-	}
-	defer unlock()
-	return false, ensureLocked(dir, o, false, progress)
-}
-
-// lockUnwritable reports an index whose lock file cannot be created or opened
-// for writing, which is how a read-only store presents itself.
-func lockUnwritable(dir string) bool {
-	f, err := os.OpenFile(dir+".lock", os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return errors.Is(err, fs.ErrPermission)
-	}
-	_ = f.Close()
-	return false
-}
-
 // ensureLocked is the body of an Ensure, with the lock already held.
 func ensureLocked(dir string, o query.Options, force bool, progress io.Writer) error {
 	sweepStaleTmp(dir)
@@ -403,90 +363,6 @@ func ensureLocked(dir string, o query.Options, force bool, progress io.Writer) e
 	return nil
 }
 
-// EnsureForSearchStale is EnsureForSearch for latency-bound callers (the MCP
-// server): cheap append-only increments run synchronously, but anything that
-// would rewrite the index (full rebuild or a whole-file store change) is
-// kicked to a detached warmup instead. The return value says whether the
-// caller is serving a stale view so it can say so honestly.
-func EnsureForSearchStale(dir string, o query.Options, progress io.Writer) (bool, error) {
-	if dir == "" {
-		dir = DefaultDir()
-	}
-	// The wait before an answer is made of three things — taking the lock,
-	// walking the stores to see what changed, and ingesting whatever did — and
-	// from the outside they are one number. A reader who sees seconds here can
-	// say which one it was rather than guessing (#3021).
-	mark := searchTrace()
-	unlock, ok, err := tryLockDir(dir)
-	if err != nil {
-		return false, err
-	}
-	if !ok {
-		// A rebuild is already running; serve the current snapshot.
-		return true, nil
-	}
-	defer unlock()
-	mark("lock")
-	// Read first, walk second: this is the path every search takes, and
-	// re-deriving state for unchanged transcripts was costing 700 ms of the
-	// second it takes to answer a query.
-	m, err := readManifest(dir)
-	mark("manifest")
-	want := currentFilesReusing("", priorFiles(m, err))
-	mark("walk stores")
-	if err != nil || m.Scope != "" || !recordsIntact(dir, m) || mustRebuildBeforeAnswering(m, version) {
-		// No usable index yet (or a rebuild-grade problem): the caller cannot
-		// serve anything sensible stale, so build synchronously.
-		return false, updateIndex(dir, o.Harness, "", want, false, progress)
-	}
-	if m.Version != version {
-		// A content-version bump that this build can still read: the store
-		// answers under the old rules while the re-read runs behind it, the
-		// way staleness is already handled. Blocking on it is what made the
-		// first question after an upgrade wait for the whole pass — 13m54s on
-		// a 520 MB store, and an agent that waited a minute gave up on the
-		// tool (#3552).
-		return true, nil
-	}
-	if manifestFresh(m, want, "") {
-		return false, nil
-	}
-	changed := map[string]FileState{}
-	removedAny := false
-	for p, f := range want {
-		if of, ok := m.Files[p]; !ok || !sameFile(of, f) {
-			changed[p] = f
-		}
-	}
-	for p := range m.Files {
-		if p == syncImportPath {
-			continue
-		}
-		if _, ok := want[p]; !ok {
-			removedAny = true
-		}
-	}
-	if !removedAny && canAppendIncremental(changed, m.Files) {
-		mark("decide append")
-		// An append is cheap until it isn't. A live session that has been
-		// writing all day — a Grok `updates.jsonl` in the tens of megabytes —
-		// is appendable, so every search sat through its tail before
-		// answering, including questions about last month's history in another
-		// harness (#3021). Past the cap it is handed to the detached warmup
-		// like rewrite-grade work: the answer comes from the snapshot with the
-		// "as it was" line, and the tail lands before the next question.
-		if tail := appendTailBytes(changed, m.Files); tail > inlineAppendMax {
-			return true, nil
-		}
-		err := updateIndex(dir, o.Harness, "", want, false, progress)
-		mark("append")
-		return false, err
-	}
-	// Caller detaches the rebuild (it owns the executable path).
-	mark("hand to warmup")
-	return true, nil
-}
-
 // redactionFloor is the last content version whose bump was about what may be
 // shown rather than about what mss derives. A store below it must not be
 // quoted while it is re-read: 41 masks the argument-credential shapes already
@@ -514,20 +390,6 @@ const redactionFloor = 46
 // redact something must not be quoted while it is being re-read.
 func mustRebuildBeforeAnswering(m Manifest, build int) bool {
 	return m.Format != onDiskFormat || m.Version < redactionFloor || m.Version > build
-}
-
-// searchTrace returns a stage marker that prints when MSS_TRACE=1, and costs a
-// comparison otherwise. Same shape and same variable as the session-start hook,
-// so one instruction covers both paths.
-func searchTrace() func(string) {
-	if os.Getenv("MSS_TRACE") != "1" {
-		return func(string) {}
-	}
-	last := time.Now()
-	return func(stage string) {
-		fmt.Fprintf(os.Stderr, "trace %-16s %6.1fms\n", stage, float64(time.Since(last).Microseconds())/1000)
-		last = time.Now()
-	}
 }
 
 func rebuild(dir string, harness string, scope string, files map[string]FileState, progress io.Writer) error {
@@ -618,8 +480,11 @@ func rebuildDead(dir string, harness string, scope string, files map[string]File
 		_ = rf.Close()
 		return err
 	}
-	preRedactSessions(&m, ss)
+	clipped := preRedactSessions(&m, ss)
 	seenMsgs := msgSeen{}
+	// positions counts records written per key, so a clipped message's mark
+	// names where `mss show` will find it.
+	positions := map[string]int{}
 	// Counted in messages and reported when a batch has actually been
 	// indexed, not when it was handed to the spiller: reporting per session
 	// pushed sent the bar from 1% to 99% in one step and then held it at 99%
@@ -634,7 +499,7 @@ func rebuildDead(dir string, harness string, scope string, files map[string]File
 	}
 	defer sp.cleanup()
 	err = sp.run(func(push func(tokenJob)) error {
-		for _, s := range ss {
+		for si, s := range ss {
 			key := s.Harness + ":" + s.ID
 			ord := uint32(0)
 			if old, ok := m.Sessions[key]; ok {
@@ -670,7 +535,15 @@ func rebuildDead(dir string, harness string, scope string, files map[string]File
 			if collided {
 				markShared(m.Sessions, key)
 			}
-			for _, msg := range s.Messages {
+			// An mss tool result sitting inside a session it served keeps its
+			// record — `show` reads what the transcript says — but earns no
+			// postings, so a search cannot find its own answer again. The gate
+			// walks messages in transcript order, before the skip checks, so a
+			// dropped or duplicated result still consumes the slot it paired
+			// with.
+			var gate mssEchoGate
+			for mi, msg := range s.Messages {
+				silent := gate.suppress(msg)
 				if seenMsgs.dup(key, msg.Role, msg.Time, msg.Text) {
 					continue
 				}
@@ -682,14 +555,22 @@ func rebuildDead(dir string, harness string, scope string, files map[string]File
 				if strings.TrimSpace(text) == "" {
 					continue
 				}
+				pos := positions[key]
 				off, err := rw.write(Record{Key: key, SourcePath: s.Path, Role: msg.Role, Text: text, Time: msg.Time})
 				if err != nil {
 					return err
 				}
+				positions[key]++
 				wroteMu.Lock()
 				wrote[key] = true
 				wroteMu.Unlock()
 				writtenMessages++
+				if clippedForSession(clipped, si)[mi] {
+					recordClippedPos(&m, s.Path, s.ID, pos)
+				}
+				if silent {
+					continue
+				}
 				push(tokenJob{text: tokenizedPart(msg.Role, text), offset: off, sid: m.Sessions[key].Ord, when: msg.Time, tool: isToolRole(msg.Role)})
 			}
 		}
@@ -1567,7 +1448,7 @@ func writeSessionsWithSync(tmp, dir string, ss []model.Session, files map[string
 	// this path used to — left ss raw, and buildFixes/buildCommands/buildCooccur
 	// then mined
 	// secrets straight out of the unredacted commands.
-	preRedactSessions(&m, ss)
+	clipped := preRedactSessions(&m, ss)
 	seenMsgs := msgSeen{}
 	// Counted in messages and reported when a batch has actually been
 	// indexed, not when it was handed to the spiller: reporting per session
@@ -1576,6 +1457,7 @@ func writeSessionsWithSync(tmp, dir string, ss []model.Session, files map[string
 	reportPhase("indexing messages", countMessages(ss))
 	wrote := map[string]bool{}
 	var wroteMu sync.Mutex
+	positions := map[string]int{}
 	sp, err := newSpiller(tmp)
 	if err != nil {
 		_ = rw.Close()
@@ -1583,7 +1465,7 @@ func writeSessionsWithSync(tmp, dir string, ss []model.Session, files map[string
 	}
 	defer sp.cleanup()
 	err = sp.run(func(push func(tokenJob)) error {
-		for _, s := range ss {
+		for si, s := range ss {
 			key := s.Harness + ":" + s.ID
 			ord := uint32(0)
 			if old, ok := m.Sessions[key]; ok {
@@ -1619,7 +1501,13 @@ func writeSessionsWithSync(tmp, dir string, ss []model.Session, files map[string
 			if collided {
 				markShared(m.Sessions, key)
 			}
-			for _, msg := range s.Messages {
+			// An mss tool result's record is written — `show` reads what the
+			// transcript says — but its postings are not: a search must not
+			// find its own answer again. The gate is per session because the
+			// command/result pairing it mirrors is per session.
+			var gate mssEchoGate
+			for mi, msg := range s.Messages {
+				silent := gate.suppress(msg)
 				if seenMsgs.dup(key, msg.Role, msg.Time, msg.Text) {
 					continue
 				}
@@ -1631,14 +1519,22 @@ func writeSessionsWithSync(tmp, dir string, ss []model.Session, files map[string
 				if strings.TrimSpace(text) == "" {
 					continue
 				}
+				pos := positions[key]
 				off, err := rw.write(Record{Key: key, SourcePath: s.Path, Role: msg.Role, Text: text, Time: msg.Time})
 				if err != nil {
 					return err
 				}
+				positions[key]++
 				wroteMu.Lock()
 				wrote[key] = true
 				wroteMu.Unlock()
 				writtenMessages++
+				if clippedForSession(clipped, si)[mi] {
+					recordClippedPos(&m, s.Path, s.ID, pos)
+				}
+				if silent {
+					continue
+				}
 				push(tokenJob{text: tokenizedPart(msg.Role, text), offset: off, sid: m.Sessions[key].Ord, when: msg.Time, tool: isToolRole(msg.Role)})
 			}
 		}
@@ -3187,67 +3083,6 @@ func recordsForKey(path string, t *recordTables, key string) ([]Record, error) {
 	return out, err
 }
 
-func redactForIngest(m *Manifest, sourcePath, text string) string {
-	// Drop mss's own injected recall before anything else looks at the text,
-	// so it is never counted, tokenized or stored.
-	text = stripSelfRecall(text)
-	// Canonicalise accented text to NFC so an "é" stored decomposed (base + a
-	// combining mark, as some editors and macOS filesystems emit) matches a
-	// query typed precomposed and the reverse. NFC is lossless — it names the
-	// same characters — so unlike a fold it is safe to store, and it makes every
-	// downstream surface (postings, snippet, digest) compare like against like
-	// (#1098).
-	text = nfcfold.Compose(text)
-	// Redact the full text before capping: a secret straddling the cap
-	// boundary would otherwise lose its closing marker and store raw.
-	redacted, counts := redact.Text(text)
-	if len(redacted) > maxIndexedText {
-		// Cut on a rune boundary so a multibyte rune straddling the cap is not
-		// split, leaving an invalid tail byte in the stored text.
-		cut := maxIndexedText
-		for cut > 0 && !utf8.RuneStart(redacted[cut]) {
-			cut--
-		}
-		redacted = redacted[:cut]
-		countClipped(m, sourcePath, "", 1)
-	}
-	n := counts.Total()
-	if n == 0 || m == nil {
-		return redacted
-	}
-	m.Redacted += n
-	if m.RedactionRules == nil {
-		m.RedactionRules = map[string]int{}
-	}
-	// The store, not the file kind: `mss stats` prints these as headings, and
-	// "cline-sdk" is a word no other screen uses (#2238, the shape #2234 fixed
-	// for the ingest counters).
-	h := sources.HarnessForKind(harnessForPath(sourcePath))
-	if h == "" {
-		if _, ok := m.Files[sources.OpencodeDB()]; ok {
-			h = "opencode"
-		}
-	}
-	for rule, count := range counts {
-		m.RedactionRules[h+":"+rule] += count
-	}
-	if sourcePath != "" && m.Files != nil {
-		if fs, ok := m.Files[sourcePath]; ok {
-			fs.Redactions += n
-			m.Files[sourcePath] = fs
-		} else if db := sources.OpencodeDB(); sourcePath != db {
-			// opencode sessions carry their project dir as Path; the store
-			// on record is the database file. Attribute stats there so
-			// `mss sources` reports them.
-			if fs, ok := m.Files[db]; ok {
-				fs.Redactions += n
-				m.Files[db] = fs
-			}
-		}
-	}
-	return redacted
-}
-
 func carryRedactions(m *Manifest, old Manifest, skip map[string]bool) {
 	if m.RedactionRules == nil {
 		m.RedactionRules = map[string]int{}
@@ -3584,8 +3419,10 @@ func copyIngestFiles(old map[string]FileIngest, reread map[string]FileState) map
 		if _, ok := reread[p]; ok {
 			e.Clipped = 0
 			e.ClippedSessions = nil
+			e.ClippedMsgIdx = nil
 		} else {
 			e.ClippedSessions = maps.Clone(e.ClippedSessions)
+			e.ClippedMsgIdx = maps.Clone(e.ClippedMsgIdx)
 		}
 		out[p] = e
 	}
@@ -4046,9 +3883,12 @@ func updateIndex(dir, harness, scope string, files map[string]FileState, force b
 	// rebuild of the same corpus produced a clean one. It also left
 	// metaForSession hashing unredacted text, so the friction signatures a
 	// session carried depended on which build path had touched it last.
-	preRedactSessions(&m, replacements)
+	clipped := preRedactSessions(&m, replacements)
 	buckets := bucketPostings{}
-	addRec := func(r Record) error {
+	// positions counts every record written for a key — carried and new
+	// alike — so a clipped replacement message names where `show` finds it.
+	positions := map[string]int{}
+	addRec := func(r Record, silent bool) error {
 		if r.SourcePath == "" {
 			return nil
 		}
@@ -4066,6 +3906,16 @@ func updateIndex(dir, harness, scope string, files map[string]FileState, force b
 		off, err := rw.write(r)
 		if err != nil {
 			return err
+		}
+		positions[r.Key]++
+		if silent {
+			// mss's own output coming back through the store keeps its
+			// record — `show` reads what the transcript says — but earns no
+			// postings: a search must not find its own answer again.
+			if _, exists := m.Sessions[r.Key]; !exists {
+				m.Sessions[r.Key] = meta
+			}
+			return nil
 		}
 		eachIndexKey(r.Text, r.Time, func(tok string) {
 			b := bucket(tok)
@@ -4112,7 +3962,7 @@ func updateIndex(dir, harness, scope string, files map[string]FileState, force b
 		if r.SourcePath == "" {
 			dropped[r.Key] = true // addRec does not carry it
 		}
-		recErr = addRec(r)
+		recErr = addRec(r, false)
 	}); err != nil {
 		_ = rw.Close()
 		return err
@@ -4138,7 +3988,7 @@ func updateIndex(dir, harness, scope string, files map[string]FileState, force b
 			nextOrd = meta.Ord
 		}
 	}
-	for _, s := range replacements {
+	for si, s := range replacements {
 		key := s.Harness + ":" + s.ID
 		ord := uint32(0)
 		if om, ok := old.Sessions[key]; ok {
@@ -4179,15 +4029,26 @@ func updateIndex(dir, harness, scope string, files map[string]FileState, force b
 		if collided {
 			markShared(m.Sessions, key)
 		}
-		for _, msg := range s.Messages {
+		// As in the rebuild paths: an mss tool result keeps its record —
+		// `show` reads what the transcript says — but earns no postings, so a
+		// search cannot find its own answer. The gate walks the messages in
+		// transcript order even when a record cannot be written, so a silent
+		// slot does not confuse the pairing.
+		var gate mssEchoGate
+		for mi, msg := range s.Messages {
+			silent := gate.suppress(msg)
 			if seenMsgs.dup(key, msg.Role, msg.Time, msg.Text) {
 				continue
 			}
 			// Already redacted (and length-capped) by preRedactSessions above.
 			text := msg.Text
-			if err := addRec(Record{Key: key, SourcePath: s.Path, Role: msg.Role, Text: text, Time: msg.Time}); err != nil {
+			pos := positions[key]
+			if err := addRec(Record{Key: key, SourcePath: s.Path, Role: msg.Role, Text: text, Time: msg.Time}, silent); err != nil {
 				_ = rw.Close()
 				return err
+			}
+			if clippedForSession(clipped, si)[mi] && positions[key] > pos {
+				recordClippedPos(&m, s.Path, s.ID, pos)
 			}
 		}
 	}
@@ -4264,32 +4125,6 @@ var (
 	resumableKindsOnce sync.Once
 )
 
-// inlineAppendMax is how many new bytes a search will read before answering.
-// Eight megabytes is about a second of parsing on the machine #3021 was
-// measured on, and larger than any ordinary turn: the sessions that pass it
-// are the ones being written while the question is asked. A variable so a test
-// can put the boundary where its fixtures are.
-var inlineAppendMax int64 = 8 << 20
-
-// appendTailBytes is how much has been added to the files an append would
-// read, which is what the reader waits on.
-func appendTailBytes(changed map[string]FileState, old map[string]FileState) int64 {
-	var n int64
-	for p, f := range changed {
-		of, ok := old[p]
-		if !ok {
-			// A file mss has not read before is new from its first byte, and
-			// the append path reads all of it.
-			n += f.Size
-			continue
-		}
-		if f.Size > of.Size {
-			n += f.Size - of.Size
-		}
-	}
-	return n
-}
-
 func canAppendIncremental(changed map[string]FileState, old map[string]FileState) bool {
 	if len(changed) == 0 {
 		return false
@@ -4308,12 +4143,10 @@ func canAppendIncremental(changed map[string]FileState, old map[string]FileState
 			// Whether the kind can *resume* a parse does not matter here, only
 			// whether mss can parse it at all: a new file is read from its
 			// first byte either way. Requiring an offset parser refused the
-			// whole batch over one such file, and an inline caller hands
-			// rewrite-grade work to a detached warmup rather than doing it —
-			// so the live index on the machine this was found on had never
-			// read 1,013 of the files its own loaders list: five senpi
-			// transcripts, five Copilot Chat ones, and a thousand opencode
-			// session diffs, a kind that gains a file per session (#3747).
+			// whole batch over one such file, and a live index then never read
+			// 1,013 of the files its own loaders list: five senpi transcripts,
+			// five Copilot Chat ones, and a thousand opencode session diffs, a
+			// kind that gains a file per session (#3747).
 			if _, ok := kindForPath(p); !ok {
 				return false
 			}
@@ -4432,6 +4265,13 @@ func appendIncremental(dir, harness, scope string, old Manifest, files map[strin
 	// two depending on whether it was appended or rebuilt, so an index compared
 	// against a rebuilt copy of itself came out unequal (#3934).
 	seenMsgs := msgSeen{}
+	// positions counts the records a key already holds plus what this pass
+	// appends, so a clip mark names where `show` will find it. A key is
+	// seeded from the record log the first time a session carrying a clip
+	// mark touches it — scanning records.bin only when there is a mark to
+	// place.
+	positions := map[string]int{}
+	positionsSeeded := map[string]bool{}
 	// Every session this pass read, for the sidecars at the end.
 	var appended []model.Session
 	loadBucket := func(tok string) (map[string][]posting, error) {
@@ -4491,12 +4331,26 @@ func appendIncremental(dir, harness, scope string, old Manifest, files map[strin
 		// fields — the friction signatures especially — hashed from the raw
 		// text, so the same session got different signatures depending on which
 		// path had touched it last.
-		preRedactSessions(&m, ss)
+		clipped := preRedactSessions(&m, ss)
+		// Clip marks are tail-relative like the session's messages; the
+		// position a marked record lands at counts the records the key
+		// already holds, which only sessions carrying a mark need to know.
+		for si, s := range ss {
+			key := s.Harness + ":" + s.ID
+			if clippedForSession(clipped, si) != nil && !positionsSeeded[key] {
+				existing, err := recordsForKey(filepath.Join(dir, "records.bin"), tbl, key)
+				if err != nil {
+					return filesTouched, messages, 0, err
+				}
+				positions[key] = len(existing)
+				positionsSeeded[key] = true
+			}
+		}
 		// Kept for the sidecars below, after redaction so a pair cannot carry a
 		// credential the records do not.
 		appended = append(appended, ss...)
 		filesTouched++
-		for _, s := range ss {
+		for si, s := range ss {
 			key := s.Harness + ":" + s.ID
 			meta := m.Sessions[key]
 			named := meta.ID != ""
@@ -4609,7 +4463,12 @@ func appendIncremental(dir, harness, scope string, old Manifest, files map[strin
 				}
 			}
 			m.Sessions[key] = meta
-			for _, msg := range s.Messages {
+			// Same rule as the rebuild paths: an mss tool result keeps its
+			// record and loses its postings; the gate reads every message in
+			// transcript order, before the skip checks.
+			var gate mssEchoGate
+			for mi, msg := range s.Messages {
+				silent := gate.suppress(msg)
 				// Already redacted (and length-capped) by preRedactSessions above.
 				text := msg.Text
 				// A message that is nothing but harness plumbing strips to empty
@@ -4621,11 +4480,19 @@ func appendIncremental(dir, harness, scope string, old Manifest, files map[strin
 				if seenMsgs.dup(key, msg.Role, msg.Time, text) {
 					continue
 				}
+				pos := positions[key]
 				off, err := rw.write(Record{Key: key, SourcePath: s.Path, Role: msg.Role, Text: text, Time: msg.Time})
 				if err != nil {
 					return filesTouched, messages, 0, err
 				}
+				positions[key]++
 				messages++
+				if clippedForSession(clipped, si)[mi] {
+					recordClippedPos(&m, s.Path, s.ID, pos)
+				}
+				if silent {
+					continue
+				}
 				var keyErr error
 				eachTextKey(text, func(tok string) {
 					if keyErr != nil {
@@ -5253,17 +5120,23 @@ func indexedText(text string) (string, redact.Counts, bool) {
 // build; the write loop stays sequential (append-only log), but by the time
 // it runs every text is already clean. Counters land in the manifest exactly
 // as the serial path recorded them.
-func preRedactSessions(m *Manifest, ss []model.Session) {
-	var mu sync.Mutex
-	jobs := make(chan int)
-	var wg sync.WaitGroup
+//
+// It also returns, per session, the set of message positions whose text was
+// cut by the length cap: the write loops turn a cut message's record offset
+// into a flag on the window that shows it, which the count alone could not
+// place.
+func preRedactSessions(m *Manifest, ss []model.Session) []map[int]bool {
+	clipped := make([]map[int]bool, len(ss))
 	workers := runtime.GOMAXPROCS(0)
 	if workers > len(ss) {
 		workers = len(ss)
 	}
 	if workers < 1 {
-		return
+		return clipped
 	}
+	var mu sync.Mutex
+	jobs := make(chan int)
+	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
 		go func() {
@@ -5271,8 +5144,12 @@ func preRedactSessions(m *Manifest, ss []model.Session) {
 			for si := range jobs {
 				s := &ss[si]
 				for mi := range s.Messages {
-					redacted, counts, clipped := indexedText(s.Messages[mi].Text)
-					if clipped {
+					redacted, counts, cut := indexedText(s.Messages[mi].Text)
+					if cut {
+						if clipped[si] == nil {
+							clipped[si] = map[int]bool{}
+						}
+						clipped[si][mi] = true
 						mu.Lock()
 						countClipped(m, s.Path, s.ID, 1)
 						mu.Unlock()
@@ -5311,6 +5188,18 @@ func preRedactSessions(m *Manifest, ss []model.Session) {
 	}
 	close(jobs)
 	wg.Wait()
+	return clipped
+}
+
+// clippedForSession returns the per-message clip marks preRedactSessions
+// recorded for one session — the set of message positions whose stored text
+// was cut. nil when the pass parsed no sessions or clipped none of this
+// one's.
+func clippedForSession(clipsets []map[int]bool, i int) map[int]bool {
+	if i < len(clipsets) {
+		return clipsets[i]
+	}
+	return nil
 }
 
 // prefixSampleWindow is how much is read at each end. Large enough that a
@@ -5374,24 +5263,30 @@ func filePrefixHash(path string, n int64) uint64 {
 	return h.Sum64()
 }
 
+// clipAttrPath resolves the file a session's clip count belongs on — its own
+// transcript, or the database an opencode session's Path only names the
+// project of.
+func clipAttrPath(m *Manifest, sourcePath string) string {
+	p := sourcePath
+	if harnessForPath(p) != "" {
+		return p
+	}
+	if db := sources.OpencodeDB(); db != "" {
+		if _, ok := m.Files[db]; ok {
+			return db
+		}
+	}
+	return ""
+}
+
 // countClipped records messages stored short of the transcript, against the
-// file that holds them. The caller holds the lock where one is needed;
-// redactForIngest runs single-threaded.
+// file that holds them.
 func countClipped(m *Manifest, sourcePath, sessionID string, n int) {
 	if m == nil || n == 0 {
 		return
 	}
-	p := sourcePath
-	if harnessForPath(p) == "" {
-		// opencode sessions carry their project dir as Path; the store on
-		// record is the database file.
-		if db := sources.OpencodeDB(); db != "" {
-			if _, ok := m.Files[db]; ok {
-				p = db
-			}
-		}
-	}
-	if harnessForPath(p) == "" {
+	p := clipAttrPath(m, sourcePath)
+	if p == "" {
 		return
 	}
 	if m.IngestFiles == nil {
@@ -5405,5 +5300,28 @@ func countClipped(m *Manifest, sourcePath, sessionID string, n int) {
 		}
 		e.ClippedSessions[sessionID] += n
 	}
+	m.IngestFiles[p] = e
+}
+
+// recordClippedPos marks where a clipped message landed in its session's
+// record order — the numbering `mss show` slices by. Positions are counted at
+// write time; a store that reports only the count leaves the flag
+// per-session.
+func recordClippedPos(m *Manifest, sourcePath, sessionID string, pos int) {
+	if m == nil || sessionID == "" {
+		return
+	}
+	p := clipAttrPath(m, sourcePath)
+	if p == "" {
+		return
+	}
+	if m.IngestFiles == nil {
+		m.IngestFiles = map[string]FileIngest{}
+	}
+	e := m.IngestFiles[p]
+	if e.ClippedMsgIdx == nil {
+		e.ClippedMsgIdx = map[string][]int{}
+	}
+	e.ClippedMsgIdx[sessionID] = append(e.ClippedMsgIdx[sessionID], pos)
 	m.IngestFiles[p] = e
 }

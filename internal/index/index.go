@@ -671,7 +671,12 @@ import (
 // 64 masks the tail of a key-value secret that ends in punctuation:
 // `--password=Sup3rS3cretValue!!xyz` was stored with `!!xyz` after the marker
 // (#4682). Redaction runs at ingest, so only a rebuild drops the tails.
-const version = 65
+
+// 66 drops the postings of mss's own output coming back through a transcript
+// — the tool result right after an `mss` command, or one carrying the
+// produced_by marker mss writes into its JSON — so a search cannot find its
+// own answer and call it evidence. The record stays; only the index loses it.
+const version = 66
 
 // onDiskFormat is how the store is laid out on disk — the record encoding, the
 // bucket encoding, the manifest's own shape. It moves only when a reader of an
@@ -1035,6 +1040,13 @@ type FileIngest struct {
 	// one threads.db, so the file's count alone put the note on every thread
 	// in it (#4340). Kept out of the JSON: the contract is the per-file count.
 	ClippedSessions map[string]int `json:"-"`
+	// ClippedMsgIdx is ClippedSessions with positions: the 0-based record
+	// indices a session's clipped messages landed at, so a window of the
+	// transcript can say whether what it holds was cut. Recorded by full
+	// passes and by appends from the stored record count; a pass that only
+	// knows the message — not where it sits — leaves it out and the count
+	// alone stands.
+	ClippedMsgIdx map[string][]int `json:"-"`
 	// Reason says why the last unusable record was skipped, for a store whose
 	// records are rows rather than lines a reader can go and look at (#4341).
 	Reason string `json:"reason,omitempty"`

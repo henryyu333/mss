@@ -110,7 +110,7 @@ transcript keeps what mss printed and blame reads transcripts.
 `EnsureForSearch` compares the current file set with `manifest.gob`:
 
 - fresh manifest: do nothing;
-- version or scope mismatch: rebuild. Two versions are tracked: the content version, which moves when mss derives something new from a transcript, and the on-disk format, which moves only when an older layout would be mis-read. A store whose content version is stale is re-read but keeps answering from what it has; only a format mismatch makes search say it cannot answer yet;
+- version or scope mismatch: rebuild. Two versions are tracked: the content version, which moves when mss derives something new from a transcript, and the on-disk format, which moves only when an older layout would be mis-read;
 - append-only JSONL changes: append new records and update touched buckets. A harness whose sessions are re-read whole when they change (opencode, Cursor, Grok) replaces those sessions instead (#4207, #4450);
 - removed files or non-append changes: rewrite the index while preserving unchanged records and replacing changed sessions.
 
@@ -128,11 +128,13 @@ there, and because it applies to the whole batch, one new file of a kind without
 one — a Cursor CLI transcript, a dsh session log — sent every other
 changed file down the rewrite branch too.
 
-Search does not wait for the rewrite branch. `EnsureForSearchStale` runs the
-cheap half inline and reports that the rest is outstanding; the caller refreshes
-in a detached warmup and answers from the index it already has. The CLI takes
-that path — a rewrite of a gigabyte of records and buckets is not a cost a
-query can pay — while `mss index` still does the work in front of you.
+Search waits for the refresh it needs. An invocation is explicit — a person or
+a script asked a question — so the cheap half and the rewrite half both run
+before the answer: appending is what it costs for a live transcript, and a
+rewrite is what it costs when a store changed shape. The answer is always
+computed over what is on disk now, never over a snapshot that predates the
+question, and a long refresh narrates itself on stderr rather than reporting
+stale.
 
 Cold rebuild does all parsing first, then writes `records.bin`, buckets, and manifest from one goroutine. That keeps the on-disk index coherent and avoids concurrent writers. The five sidecars derived afterwards — the co-occurrence map, fix pairs, the recurring-command table, the failures and the session facts — each write their own file and read nothing the others write, so they run together, and fix mining and the co-occurrence map also run per session across cores. That is most of the difference between a 51s and a 30s rebuild on a real store.
 

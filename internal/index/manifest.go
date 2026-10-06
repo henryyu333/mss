@@ -13,29 +13,6 @@ import (
 	"github.com/henryyu333/mss/internal/policy"
 )
 
-// ReadableSnapshot reports whether the store on disk can be read by this build
-// even though its content rules are stale.
-//
-// A version bump forces a rebuild, and during it every reading surface has to
-// choose between an answer under the old rules and no answer at all. When the
-// on-disk layout is the one this build writes, the first is strictly better:
-// records decode, postings resolve, and what is missing is only whatever the new
-// rules would re-derive. When the layout differs — or the store predates the
-// field and cannot say — there is nothing a reader can trust.
-//
-// Damage is not staleness and is the caller's check: a torn record log is
-// unreadable whatever its format says.
-func ReadableSnapshot(dir string) bool {
-	if dir == "" {
-		dir = DefaultDir()
-	}
-	m, err := readManifestCached(dir)
-	if err != nil {
-		return false
-	}
-	return m.Format == onDiskFormat
-}
-
 // IsCurrentVersion reports whether the index on disk was written by this
 // build's format. Hook paths never call Ensure, so after an upgrade that
 // changes the layout they would read the old store directly — for version 12

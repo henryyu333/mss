@@ -1,6 +1,11 @@
 package index
 
-import "strings"
+import (
+	"path/filepath"
+	"strings"
+
+	"github.com/henryyu333/mss/internal/model"
+)
 
 // mss injects recall into an agent's context wrapped in <mss-recall> markers.
 // The harness then writes that context into its own transcript, and mss indexes
@@ -307,4 +312,94 @@ func stripBetween(text, open, close string) string {
 	// the real text; a message that now starts with a blank line is an artefact
 	// of the removal, not something anyone wrote.
 	return strings.Trim(out, "\n")
+}
+
+// mssProducedMarker is written by mss itself into every JSON envelope and is
+// the reliable form of "this tool output is mss's": it survives a copy into a
+// transcript, does not collide with prose discussing mss, and needs no
+// knowledge of how the harness frames its tool results. Text-mode output has
+// no envelope to put it in; those copies are caught by the command-side rule
+// instead, which treats the tool result right after an `mss` invocation as
+// mss's no matter what it says.
+const mssProducedMarker = `"produced_by":"mss"`
+
+// mssEchoGate decides, message by message in transcript order, which tool
+// results are mss's own output coming back through the store. Only the
+// postings are gated — the record itself is still written, because `mss show`
+// is an evidence surface and must read what the transcript actually says.
+//
+// The pairing is positional because nothing stronger exists: a tool result
+// does not name the command that produced it, and the tool_call side has
+// already collapsed into a command string by the time a parser hands it over
+// (claude's "Bash" name is gone before ingest sees it). A result carrying the
+// marker is mss's on its own; one right after an `mss` command line is mss's
+// whatever it holds. Anything else clears the expectation — a person or the
+// agent spoke, so the command's result already arrived or never did.
+type mssEchoGate struct {
+	pending bool
+}
+
+// suppress reports whether msg's postings should be skipped.
+func (g *mssEchoGate) suppress(msg model.Message) bool {
+	if strings.Contains(msg.Text, mssProducedMarker) {
+		g.pending = false
+		return true
+	}
+	if msg.Role == roleCommand {
+		// A command line is a tool role but it is also the primer: the
+		// tool-output branch below never sees "mss search x" itself, so the
+		// pending check has to run here or the positional rule only fires on
+		// prose. A non-mss command arriving while pending means the mss run
+		// never produced output.
+		g.pending = invokesMSS(msg.Text)
+		return false
+	}
+	if isToolRole(msg.Role) {
+		if g.pending {
+			g.pending = false
+			return true
+		}
+		return false
+	}
+	g.pending = invokesMSS(msg.Text)
+	return false
+}
+
+// invokesMSS answers whether a command line runs mss. The check is the
+// command word followed by an mss subcommand or a flag — bare word matching
+// would call every mention of the tool an invocation ("the mss notes"), and
+// the result it suppresses would be the real one after it. A word that only
+// ends in mss ("mssf") or sits in prose is not an invocation.
+func invokesMSS(text string) bool {
+	fields := strings.Fields(text)
+	for i, f := range fields {
+		f = strings.TrimLeft(f, "$>")
+		name := filepath.Base(f)
+		if name != "mss" && name != "mss.exe" {
+			continue
+		}
+		// mss with nothing after it prints help; that is still an mss run,
+		// but the field before a plain "mss" is what decides here — "xargs -I
+		// {} mss" is rare enough to stand. What follows is the stronger
+		// signal: a subcommand or a flag confirms the run even mid-pipeline.
+		if i+1 >= len(fields) {
+			return true
+		}
+		next := fields[i+1]
+		if strings.HasPrefix(next, "-") || mssCommands[strings.TrimLeft(next, "-")] {
+			return true
+		}
+	}
+	return false
+}
+
+// mssCommands are the subcommands a transcript shows after `mss`: enough to
+// tell `mss search needle` from a sentence ending in mss.
+var mssCommands = map[string]bool{
+	"search": true, "show": true, "ctx": true, "last": true, "index": true,
+	"stats": true, "sources": true, "doctor": true, "forget": true,
+	"unforget": true, "recall": true, "import": true, "export": true,
+	"version": true, "help": true, "mcp": true, "blame": true,
+	"commands": true, "fixes": true, "errors": true, "digest": true,
+	"attribution": true, "hook": true, "wipe": true,
 }

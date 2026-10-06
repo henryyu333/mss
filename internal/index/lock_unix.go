@@ -47,10 +47,9 @@ func lockDir(dir string) (func(), error) {
 }
 
 // tryLockDir is lockDir without blocking: ok=false means another process
-// (typically a detached rebuild) holds the lock. Read paths fall back to
-// lock-free snapshot reads — the atomic directory swap plus the corrupt-index
-// recovery retry make that safe, while waiting here would stall an MCP tool
-// call for the length of a rebuild.
+// holds the lock. Read paths fall back to lock-free snapshot reads — the
+// atomic directory swap plus the corrupt-index recovery retry make that
+// safe — while a refresh waits on it and answers with what it built.
 func tryLockDir(dir string) (func(), bool, error) {
 	lockPath := dir + ".lock"
 	// Same refusal as lockDir: a reader that decides to build would delete a

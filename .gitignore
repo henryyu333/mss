@@ -47,11 +47,3 @@ coverage.out
 /node_modules/
 .DS_Store
 
-# mss's own state files, which sit beside the index: running the binary with
-# MSS_INDEX_DIR pointing at a checkout drops them in it. `.hookseen` has been
-# sitting untracked in a working copy since September, and `.live` is new in
-# 0.21.2 and lands the same way.
-.hookseen
-.hookcache-*
-.warmup
-.live
