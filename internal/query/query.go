@@ -115,6 +115,10 @@ type Options struct {
 	// records, truncated messages. The caller fills it after the refresh;
 	// nil means "not reported".
 	Coverage *Coverage `json:"-"`
+	// Refresh says this answer was served without refreshing the index, and
+	// when the index was last refreshed. Set by the caller that skipped the
+	// refresh; nil means one ran.
+	Refresh *Refresh `json:"-"`
 	// Now anchors relative-time phrases in the query ("a week ago"); zero
 	// means the moment of the search.
 	Now time.Time `json:"-"`
@@ -300,6 +304,22 @@ func Tokens(s string) []string {
 		out = append(out, tok)
 	}
 	return out
+}
+
+// Refresh is the envelope's record of an answer served without refreshing the
+// index — `--no-refresh`, the mode the manual-recall flow uses after one
+// `mss index`. A refreshed answer carries no such stanza: there is nothing to
+// warn about. Its presence is what says "this is the index as it was", and
+// LastRefresh says how far behind it may be.
+type Refresh struct {
+	// Refreshed is false on every envelope that carries this. Spelled out
+	// rather than left to the field's absence so a consumer reads the fact
+	// instead of inferring it.
+	Refreshed bool `json:"refreshed"`
+	// LastRefresh is when the index last walked this machine's stores — see
+	// index.ManifestSourcesReadAt. Omitted when the index records no walk
+	// (a store an import built, or one that could not be read).
+	LastRefresh time.Time `json:"last_refresh,omitzero"`
 }
 
 // Coverage is what a search did not see, said rather than left silent. A

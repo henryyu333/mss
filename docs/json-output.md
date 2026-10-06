@@ -76,6 +76,29 @@ Reporting `total` as the length of that window instead of the pool behind it was
 back `"total": 50, "capped": false`, which reads as "50 matched, none withheld"
 in the one case where a consumer most needs to keep looking.
 
+### Reading without a refresh (`--no-refresh`)
+
+`mss search` and `mss show` refresh the index before they answer. A caller
+that already refreshed — the manual-recall flow runs `mss index --quiet` once
+at the start — can pass `--no-refresh`: the command then reads the index as it
+was, takes no write lock, and cannot wait on another `mss` that is building.
+Unlike a plain read it will not build an index that does not exist yet, nor
+repair a damaged one; both refusals name `mss index`.
+
+An answer served this way says so, in a `refresh` object that appears on the
+search, candidate-list, and `show` envelopes alike:
+
+```json
+"refresh": {"refreshed": false, "last_refresh": "2026-10-07T00:21:05Z"}
+```
+
+`refreshed` is `false` on every envelope that carries the field — an answer
+that refreshed omits it, so its presence is the signal. `last_refresh` is when
+the index last walked this machine's stores, the same stamp `mss doctor`
+compares stores against; it is omitted when the index records no walk (a store
+an import built, or one that could not be read). The terminal gets the same
+fact as a stderr line.
+
 ## `mss search --json`
 
 Every search returns one envelope:
@@ -305,3 +328,5 @@ exclusive. `window.clipped` is present and true when the window holds a
 message the index stored short of the transcript — or, on an index that only
 kept the file count, when the session is known to hold one anywhere. An offset past the end
 returns a session with no `messages` key and a `returned` count of zero.
+A `--no-refresh` window carries the `refresh` object described under
+[Reading without a refresh](#reading-without-a-refresh---no-refresh).

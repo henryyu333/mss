@@ -35,6 +35,9 @@ type sessionJSON struct {
 	ProducedBy    string        `json:"produced_by"`
 	Session       model.Session `json:"session"`
 	Window        sessionWindow `json:"window"`
+	// Refresh says this window was served without refreshing the index, and
+	// when the index was last refreshed. Absent on an answer that refreshed.
+	Refresh *query.Refresh `json:"refresh,omitempty"`
 }
 
 // sessionCandidate is one row of `mss search --sessions`: the session's
@@ -66,6 +69,9 @@ type sessionsEnvelope struct {
 	Strict   int                `json:"strict,omitempty"`
 	Sessions []sessionCandidate `json:"sessions"`
 	Coverage *query.Coverage    `json:"coverage,omitempty"`
+	// Refresh says this list was served without refreshing the index, and
+	// when the index was last refreshed. Absent on an answer that refreshed.
+	Refresh *query.Refresh `json:"refresh,omitempty"`
 }
 
 func printRecentJSONWithheld(w io.Writer, sessions []model.Session, sourceInstance string, withheld int) error {
@@ -103,8 +109,9 @@ func sliceMessages(ms []model.Message, offset, limit int) []model.Message {
 // can go from a hit's number to this window without re-counting the session.
 // The window's clipped flag says a message in it was stored short of the
 // transcript: the rest is in the file, and saying nothing made a searched
-// line look absent from what mss holds (#2467).
-func printSessionJSON(w io.Writer, dir string, session model.Session, offset, limit int, sourceInstance string) error {
+// line look absent from what mss holds (#2467). refresh is the stanza a
+// --no-refresh answer carries, nil when the index was refreshed first.
+func printSessionJSON(w io.Writer, dir string, session model.Session, offset, limit int, sourceInstance string, refresh *query.Refresh) error {
 	clipIdx, sessionClipped := index.ClippedMessagePositions(dir, session)
 	clipped := sessionClipped
 	if clipIdx != nil {
@@ -132,6 +139,7 @@ func printSessionJSON(w io.Writer, dir string, session model.Session, offset, li
 			Offset: offset, Limit: limit, Total: total, Returned: len(session.Messages),
 			Clipped: clipped,
 		},
+		Refresh: refresh,
 	})
 }
 
@@ -166,6 +174,7 @@ func printSessionsJSON(w io.Writer, sessions []model.Session, matchIndices map[s
 		Strict:        o.Strict,
 		Sessions:      cands,
 		Coverage:      o.Coverage,
+		Refresh:       o.Refresh,
 	})
 }
 

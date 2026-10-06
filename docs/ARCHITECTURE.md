@@ -134,7 +134,13 @@ before the answer: appending is what it costs for a live transcript, and a
 rewrite is what it costs when a store changed shape. The answer is always
 computed over what is on disk now, never over a snapshot that predates the
 question, and a long refresh narrates itself on stderr rather than reporting
-stale.
+stale. A caller that has refreshed once itself — the manual-recall flow runs
+`mss index --quiet` and then queries in parallel — passes `--no-refresh` to
+skip that pass: the answer is the index as it was, the envelope says so
+(`refresh.refreshed: false` and `refresh.last_refresh`), and no blocking lock
+is taken, so concurrent reads cannot queue behind a build. `--no-refresh`
+cannot build an index that is not there and does not repair a damaged one;
+both say to run `mss index`.
 
 Cold rebuild does all parsing first, then writes `records.bin`, buckets, and manifest from one goroutine. That keeps the on-disk index coherent and avoids concurrent writers. The five sidecars derived afterwards — the co-occurrence map, fix pairs, the recurring-command table, the failures and the session facts — each write their own file and read nothing the others write, so they run together, and fix mining and the co-occurrence map also run per session across cores. That is most of the difference between a 51s and a 30s rebuild on a real store.
 

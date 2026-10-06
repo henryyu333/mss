@@ -431,8 +431,20 @@ func cmdShow(dir string, rest []string, sourceInstance string) error {
 	// would not write while `show <prefix>` re-read the sources first (#3617).
 	// A store that cannot be rebuilt — read-only, no space — falls through to
 	// the loader, which refuses and says why.
+	//
+	// --no-refresh skips the pass and reads the index as it was: the flag the
+	// manual-recall flow uses after its one `mss index`, so parallel shows
+	// queue on no write lock. The lookups then read the index only — walking
+	// every store instead would be the refresh the caller declined.
 	fresh := false
-	if err := ensureIndex(dir, "", false, os.Stderr); err == nil {
+	var refresh *query.Refresh
+	if o.noRefresh {
+		if !index.HasManifest(dir) {
+			return errNoIndexToRead
+		}
+		refresh = refreshStanza(dir)
+		printNoRefreshNote(os.Stderr, dir)
+	} else if err := ensureIndex(dir, "", false, os.Stderr); err == nil {
 		fresh = true
 	}
 	var s model.Session
@@ -445,10 +457,10 @@ func cmdShow(dir string, rest []string, sourceInstance string) error {
 		// no session matches while the same prefix without --harness worked.
 		s, ok, err = index.FindByIdentity(dir, o.harness, o.id)
 		if err == nil && !ok {
-			s, ok, err = findByPrefixHarness(dir, o.id, o.harness, fresh)
+			s, ok, err = findByPrefixHarness(dir, o.id, o.harness, fresh, o.noRefresh)
 		}
 	} else {
-		s, ok, err = findByPrefixAfterEnsure(dir, o.id, fresh)
+		s, ok, err = findByPrefixAfterEnsure(dir, o.id, fresh, o.noRefresh)
 	}
 	if err != nil {
 		return err
@@ -463,7 +475,7 @@ func cmdShow(dir string, rest []string, sourceInstance string) error {
 		return err
 	}
 	if o.json {
-		return printSessionJSON(os.Stdout, dir, s, o.offset, o.limit, sourceInstance)
+		return printSessionJSON(os.Stdout, dir, s, o.offset, o.limit, sourceInstance, refresh)
 	}
 	if o.sliced {
 		// Both flags are documented for `show` and only the JSON path honoured
@@ -611,6 +623,10 @@ var ChildrenOfSession = index.ChildrenOf
 // and nothing else could see it happen.
 var ensureIndex = index.Ensure
 
+// ensureSearch is ensureIndex for the search read path, so a --no-refresh
+// answer can be pinned to zero refreshes.
+var ensureSearch = index.EnsureForSearch
+
 type showOptions struct {
 	id, harness   string
 	json          bool
@@ -626,6 +642,9 @@ type showOptions struct {
 	// offsetSet says --offset was given, because around+offset is a
 	// contradiction the parse refuses rather than resolves.
 	offsetSet bool
+	// noRefresh answers from the index as it was: the refresh pass is
+	// skipped and so is the write lock it takes.
+	noRefresh bool
 }
 
 // showLargeSession is where `mss show` mentions the flags that read a slice.
@@ -638,6 +657,8 @@ func parseShow(args []string) (showOptions, error) {
 		switch a := args[i]; a {
 		case "--json":
 			o.json = true
+		case "--no-refresh":
+			o.noRefresh = true
 		case "--harness", "--offset", "--limit", "--around":
 			if i+1 >= len(args) {
 				return o, fmt.Errorf("%s needs value", a)
@@ -1046,7 +1067,39 @@ func cmdSearch(dir string, rest []string, sourceInstance string) error {
 //
 // `--rebuild` means the same thing it always has: force, then wait.
 func ensureForCLISearch(dir string, o search.Options, force bool, progress io.Writer) error {
-	return index.EnsureForSearch(dir, o, force, progress)
+	return ensureSearch(dir, o, force, progress)
+}
+
+// searchFromIndex reads an answer. A corrupt index normally heals through one
+// rebuild-and-retry; a --no-refresh answer asked not to touch the index, so
+// the damage is reported to the caller instead.
+func searchFromIndex(dir string, o search.Options, noRefresh bool) (index.SearchResult, error) {
+	if noRefresh {
+		return index.SearchDetailed(dir, o)
+	}
+	return index.SearchWithRecoveryDetailed(dir, o, os.Stderr)
+}
+
+// errNoIndexToRead is what --no-refresh answers with when there is no index
+// yet: the mode reads the index as it was, and there is no it.
+var errNoIndexToRead = errors.New("no index to answer from yet — `mss index` builds one (--no-refresh reads the index as it was)")
+
+// refreshStanza is the JSON envelope's record for an answer served from the
+// index as it was: nothing walked the stores, and this is when something last
+// did.
+func refreshStanza(dir string) *query.Refresh {
+	return &query.Refresh{Refreshed: false, LastRefresh: index.ManifestSourcesReadAt(dir)}
+}
+
+// printNoRefreshNote says on stderr what the refresh stanza says in JSON.
+// Silence here would make a stale answer indistinguishable from a fresh one
+// for a reader watching the terminal.
+func printNoRefreshNote(w io.Writer, dir string) {
+	if t := index.ManifestSourcesReadAt(dir); !t.IsZero() {
+		fmt.Fprintf(w, "mss: answering from the index as it was — no refresh ran; it was last refreshed %s (run `mss index` to refresh it)\n", t.Local().Format("2006-01-02 15:04"))
+		return
+	}
+	fmt.Fprintf(w, "mss: answering from the index as it was — no refresh ran, and the index records no refresh time (run `mss index` to refresh it)\n")
 }
 
 func runBareSearch(dir string, args []string, sourceInstance string) error {
@@ -1059,6 +1112,7 @@ func runSearch(dir string, args []string, sourceInstance string) error {
 
 func searchWithOptions(dir string, args []string, sourceInstance string, bare bool) error {
 	force := false
+	noRefresh := false
 	sessionsMode := false
 	var excludeIDs []string
 	var excludeSelf string
@@ -1077,6 +1131,12 @@ func searchWithOptions(dir string, args []string, sourceInstance string, bare bo
 		}
 		if a == "--sessions" {
 			sessionsMode = true
+			continue
+		}
+		// Peeled here, like --exclude: parseSearch would otherwise fold it
+		// into the query or refuse it as a near-miss of another flag.
+		if a == "--no-refresh" || a == "-no-refresh" {
+			noRefresh = true
 			continue
 		}
 		if strings.HasPrefix(a, "--exclude=") {
@@ -1132,7 +1192,18 @@ func searchWithOptions(dir string, args []string, sourceInstance string, bare bo
 	}
 	sinceRaw := sinceRawArg(filtered)
 	o.SourceInstance = sourceInstance
-	if err := withBuildProgress(func() error { return ensureForCLISearch(dir, o, force, os.Stderr) }); err != nil {
+	if noRefresh && force {
+		return fmt.Errorf("search takes --no-refresh or --rebuild, not both — one answers without touching the index and the other rebuilds it")
+	}
+	if noRefresh {
+		// The one thing --no-refresh cannot do is build an index that is not
+		// there; say so rather than letting the read fail on a missing file.
+		if !index.HasManifest(dir) {
+			return errNoIndexToRead
+		}
+		o.Refresh = refreshStanza(dir)
+		printNoRefreshNote(os.Stderr, dir)
+	} else if err := withBuildProgress(func() error { return ensureForCLISearch(dir, o, force, os.Stderr) }); err != nil {
 		// A store that cannot be written still has an index that can be read:
 		// answering from it beats answering nothing (#904).
 		if !staleUnwritableIndex(dir, err) {
@@ -1146,7 +1217,7 @@ func searchWithOptions(dir string, args []string, sourceInstance string, bare bo
 	selfFound := true
 	if len(o.ExcludeIDs) > 0 || o.ExcludeSelf != "" {
 		var expanded map[string]bool
-		expanded, selfFound, err = resolveSearchExcludes(dir, o.ExcludeIDs, o.ExcludeSelf)
+		expanded, selfFound, err = resolveSearchExcludes(dir, o.ExcludeIDs, o.ExcludeSelf, noRefresh)
 		if err != nil {
 			return err
 		}
@@ -1165,8 +1236,13 @@ func searchWithOptions(dir string, args []string, sourceInstance string, bare bo
 			o.Coverage.Complete = false
 		}
 	}
-	result, err := index.SearchWithRecoveryDetailed(dir, o, os.Stderr)
+	result, err := searchFromIndex(dir, o, noRefresh)
 	if err != nil {
+		if noRefresh && index.IsCorrupt(err) {
+			// The repair that normally runs here is a build, and --no-refresh
+			// was asked not to touch the index.
+			return fmt.Errorf("the index is damaged — `mss index` rebuilds it (--no-refresh never writes)")
+		}
 		return fmt.Errorf("search: %w", err)
 	}
 	// Before ranking, not after: the cap is applied while ranking, so a rule
@@ -2120,17 +2196,20 @@ func findByPrefix(dir, p string) (model.Session, bool, error) {
 	if err := ensureIndex(dir, "", false, os.Stderr); err == nil {
 		fresh = true
 	}
-	return findByPrefixAfterEnsure(dir, p, fresh)
+	return findByPrefixAfterEnsure(dir, p, fresh, false)
 }
 
 // findByPrefixAfterEnsure resolves an id prefix when the caller has already
 // refreshed — or decided not to. fresh means the index holds what a refresh
 // just wrote; otherwise the stores are read directly, so an index that cannot
-// be rebuilt — read-only, no space — still answers.
-func findByPrefixAfterEnsure(dir, p string, fresh bool) (model.Session, bool, error) {
-	if fresh {
-		if s, ok, err := index.FindByPrefix(dir, p); err == nil {
-			return s, ok, nil
+// be rebuilt — read-only, no space — still answers. indexOnly is the
+// --no-refresh lookup: the index is the only source, because walking every
+// store would be the refresh the caller declined.
+func findByPrefixAfterEnsure(dir, p string, fresh, indexOnly bool) (model.Session, bool, error) {
+	if fresh || indexOnly {
+		s, ok, err := index.FindByPrefix(dir, p)
+		if err == nil || indexOnly {
+			return s, ok, err
 		}
 	}
 	ss := loadFileSources()
@@ -2142,9 +2221,9 @@ func findByPrefixAfterEnsure(dir, p string, fresh bool) (model.Session, bool, er
 // findByPrefixHarness resolves an id prefix within one harness, so the
 // documented "mss show <id-prefix> --harness name" form works. fresh is the
 // caller's one refresh, already done: doing it here again is how show ran the
-// build twice for one answer.
-func findByPrefixHarness(dir, p, harness string, fresh bool) (model.Session, bool, error) {
-	s, ok, err := findByPrefixAfterEnsure(dir, p, fresh)
+// build twice for one answer. indexOnly is findByPrefixAfterEnsure's.
+func findByPrefixHarness(dir, p, harness string, fresh, indexOnly bool) (model.Session, bool, error) {
+	s, ok, err := findByPrefixAfterEnsure(dir, p, fresh, indexOnly)
 	if err != nil || !ok {
 		return model.Session{}, false, err
 	}
@@ -2422,12 +2501,12 @@ var flagsOfOtherCommands = map[string]string{
 // wrong refusal.
 var (
 	indexFlags  = []string{"--rebuild", "--quiet"}
-	showFlags   = []string{"--json", "--harness", "--offset", "--limit", "--around"}
+	showFlags   = []string{"--json", "--harness", "--offset", "--limit", "--around", "--no-refresh"}
 	doctorFlags = []string{"--json", "--deep"}
 )
 
 var searchFlags = []string{
-	"--json", "--re", "--all", "--rebuild", "--sessions",
+	"--json", "--re", "--all", "--rebuild", "--sessions", "--no-refresh",
 	"--harness", "--project", "--since", "--role", "--limit", "--session",
 	"--exclude", "--exclude-self",
 }
@@ -3262,7 +3341,10 @@ func capTierHits(hits []search.Hit, o search.Options) ([]search.Hit, bool) {
 //
 // selfFound says whether the nonce matched anything; a miss is reported as
 // coverage, not an error — the session asking may simply not be indexed yet.
-func resolveSearchExcludes(dir string, ids []string, nonce string) (map[string]bool, bool, error) {
+//
+// noRefresh is the caller's --no-refresh: a torn read normally heals by
+// rebuilding here, and this mode does not write.
+func resolveSearchExcludes(dir string, ids []string, nonce string, noRefresh bool) (map[string]bool, bool, error) {
 	byPrefix, err := index.SessionIDsByPrefix(dir, ids)
 	if err != nil {
 		// The caller distinguishes corrupt from unmatched: without this the
@@ -3287,7 +3369,7 @@ func resolveSearchExcludes(dir string, ids []string, nonce string) (map[string]b
 	}
 	out, found, err := index.ExpandExclude(dir, resolved, nonce)
 	if err != nil {
-		if index.IsCorrupt(err) {
+		if index.IsCorrupt(err) && !noRefresh {
 			// The exclusion ran before the search, so it missed the retry
 			// the search itself would take on a torn read: refresh once,
 			// then resolve again rather than failing what would have healed.

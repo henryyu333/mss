@@ -91,6 +91,10 @@ type searchJSONEnvelope struct {
 	// records, cut messages — filled by the caller, which has the index and
 	// the refresh; this package only knows how to say it.
 	Coverage *query.Coverage `json:"coverage,omitempty"`
+	// Refresh is the envelope's record that the answer was served without
+	// refreshing the index, and when the index was last refreshed. Absent on
+	// an answer that refreshed.
+	Refresh *query.Refresh `json:"refresh,omitempty"`
 }
 
 // MatchLabel maps the tier and strictness onto the three values the envelope
@@ -1532,6 +1536,7 @@ func Print(w io.Writer, hits []Hit, o Options) {
 			Semantic:      o.Semantic,
 			Variants:      o.FuzzyVariants,
 			Coverage:      o.Coverage,
+			Refresh:       o.Refresh,
 		})
 		return
 	}

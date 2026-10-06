@@ -1,15 +1,19 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/henryyu333/mss/internal/index"
+	"github.com/henryyu333/mss/internal/query"
 )
 
 // TestMain keeps the suite off the developer's real stores and index: a
@@ -136,6 +140,161 @@ func countRefreshes(t *testing.T) *int {
 	}
 	t.Cleanup(func() { ensureIndex = old })
 	return n
+}
+
+// countSearchRefreshes is countRefreshes for the search read path's seam.
+func countSearchRefreshes(t *testing.T) *int {
+	t.Helper()
+	n := new(int)
+	old := ensureSearch
+	ensureSearch = func(dir string, o query.Options, force bool, progress io.Writer) error {
+		*n++
+		return old(dir, o, force, progress)
+	}
+	t.Cleanup(func() { ensureSearch = old })
+	return n
+}
+
+// runCaptured runs f with stdout and stderr redirected, so the test can read
+// what a command printed without it reaching the test log.
+func runCaptured(t *testing.T, f func() error) (stdout, stderr string, err error) {
+	t.Helper()
+	outR, outW, perr := os.Pipe()
+	if perr != nil {
+		t.Fatal(perr)
+	}
+	errR, errW, perr := os.Pipe()
+	if perr != nil {
+		t.Fatal(perr)
+	}
+	oldOut, oldErr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = outW, errW
+	var wg sync.WaitGroup
+	var out, er []byte
+	wg.Add(2)
+	go func() { defer wg.Done(); out, _ = io.ReadAll(outR) }()
+	go func() { defer wg.Done(); er, _ = io.ReadAll(errR) }()
+	err = f()
+	outW.Close()
+	errW.Close()
+	os.Stdout, os.Stderr = oldOut, oldErr
+	wg.Wait()
+	return string(out), string(er), err
+}
+
+// envelopeRefresh is the stanza an answer served without a refresh carries.
+type envelopeRefresh struct {
+	Refreshed   bool      `json:"refreshed"`
+	LastRefresh time.Time `json:"last_refresh"`
+}
+
+// TestNoRefreshMarksTheAnswer pins the --no-refresh contract: no refresh ran
+// — so parallel commands queue on no write lock — and the answer says so, with
+// the stamp of the last refresh, instead of reading like a fresh one.
+func TestNoRefreshMarksTheAnswer(t *testing.T) {
+	root, dir := cmdEnv(t)
+	claudeSession(t, root, "s1-aaaa",
+		claudeUser("s1-aaaa", "2026-01-02T03:04:05Z", "envelopeneedle alpha"),
+		claudeAssistant("s1-aaaa", "2026-01-02T03:04:06Z", "envelopeneedle beta"),
+	)
+	mustEnsure(t, dir)
+	wantStamp := index.ManifestSourcesReadAt(dir)
+	if wantStamp.IsZero() {
+		t.Fatal("the fixture index records no refresh time")
+	}
+
+	checkStanza := func(t *testing.T, raw, what string) {
+		t.Helper()
+		var env struct {
+			Refresh *envelopeRefresh `json:"refresh"`
+		}
+		if err := json.Unmarshal([]byte(raw), &env); err != nil {
+			t.Fatalf("%s: %v\n%s", what, err, raw)
+		}
+		if env.Refresh == nil {
+			t.Fatalf("%s carries no refresh stanza", what)
+		}
+		if env.Refresh.Refreshed {
+			t.Fatalf("%s says refreshed: true, want false", what)
+		}
+		if !env.Refresh.LastRefresh.Equal(wantStamp) {
+			t.Fatalf("%s last_refresh = %v, want %v", what, env.Refresh.LastRefresh, wantStamp)
+		}
+	}
+
+	n := countSearchRefreshes(t)
+	out, stderr, err := runCaptured(t, func() error {
+		return searchWithOptions(dir, []string{"--sessions", "--no-refresh", "envelopeneedle"}, "", true)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *n != 0 {
+		t.Fatalf("--no-refresh search refreshed %d times, want 0", *n)
+	}
+	checkStanza(t, out, "search --sessions --no-refresh")
+	if !strings.Contains(stderr, "answering from the index as it was") {
+		t.Fatalf("no stderr note that the index was not walked: %q", stderr)
+	}
+
+	// The hit envelope carries the same stanza.
+	out, _, err = runCaptured(t, func() error {
+		return searchWithOptions(dir, []string{"--no-refresh", "--json", "envelopeneedle"}, "", true)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkStanza(t, out, "search --no-refresh")
+
+	// And `show`'s window envelope does, with no refresh of its own.
+	nShow := countRefreshes(t)
+	out, _, err = runCaptured(t, func() error {
+		return cmdShow(dir, []string{"s1-aaaa", "--harness", "claude", "--json", "--no-refresh", "--limit", "5"}, "")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *nShow != 0 {
+		t.Fatalf("--no-refresh show refreshed %d times, want 0", *nShow)
+	}
+	checkStanza(t, out, "show --no-refresh")
+
+	// Without the flag nothing changed: one refresh, no stanza.
+	n2 := countSearchRefreshes(t)
+	out, _, err = runCaptured(t, func() error {
+		return searchWithOptions(dir, []string{"--sessions", "envelopeneedle"}, "", true)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *n2 != 1 {
+		t.Fatalf("default search refreshed %d times, want 1", *n2)
+	}
+	var plain map[string]any
+	if err := json.Unmarshal([]byte(out), &plain); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := plain["refresh"]; ok {
+		t.Fatal("a refreshed answer carries a refresh stanza")
+	}
+}
+
+// TestNoRefreshRefusals pins what --no-refresh will not do: build an index
+// that is not there, and mean --rebuild.
+func TestNoRefreshRefusals(t *testing.T) {
+	_, dir := cmdEnv(t)
+	_, _, err := runCaptured(t, func() error {
+		return searchWithOptions(dir, []string{"--no-refresh", "anything"}, "", true)
+	})
+	if err == nil || !strings.Contains(err.Error(), "no index to answer from") {
+		t.Fatalf("search --no-refresh without an index = %v, want the no-index refusal", err)
+	}
+	_, _, err = runCaptured(t, func() error {
+		return searchWithOptions(dir, []string{"--no-refresh", "--rebuild", "anything"}, "", true)
+	})
+	if err == nil || !strings.Contains(err.Error(), "not both") {
+		t.Fatalf("search --no-refresh --rebuild = %v, want the contradiction", err)
+	}
 }
 
 // TestShowRefreshesOnce pins one `show`, one refresh: the --harness exact

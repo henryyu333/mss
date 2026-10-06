@@ -23,8 +23,9 @@ func TestSearchJSONKeysMatchTheDocumentedContract(t *testing.T) {
 		"strict": true, "match": true, "produced_by": true, "coverage": true,
 		"unread": true, "skipped": true, "records": true, "files": true,
 		"clipped": true, "self_requested": true, "self_excluded": true,
-		"complete": true,
-		"semantic": true, "variants": true,
+		"complete": true, "refresh": true, "refreshed": true,
+		"last_refresh": true,
+		"semantic":     true, "variants": true,
 		// hit
 		"session": true, "count": true, "snippets": true, "score": true,
 		"tier_detail": true, "superseded": true, "reused": true, "moved": true,
@@ -51,6 +52,7 @@ func TestSearchJSONKeysMatchTheDocumentedContract(t *testing.T) {
 			SelfRequested: true, SelfExcluded: true,
 			Complete: false,
 		},
+		Refresh: &query.Refresh{LastRefresh: now},
 		Hits: []Hit{{
 			Session: model.Session{
 				ID: "i", Harness: "claude", Project: "p", Path: "/x", Title: "t",
