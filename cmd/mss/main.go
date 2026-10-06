@@ -1223,6 +1223,9 @@ func searchWithOptions(dir string, args []string, sourceInstance string, bare bo
 	if err != nil {
 		return err
 	}
+	if o.Sort != "" && !sessionsMode {
+		return fmt.Errorf("--sort needs --sessions — the candidate list is what it orders")
+	}
 	o.ExcludeIDs = excludeIDs
 	o.ExcludeSelf = excludeSelf
 	o.Sessions = sessionsMode
@@ -2471,7 +2474,7 @@ func parseSearch(args []string) (search.Options, error) {
 			o.Regex = true
 		case "--all":
 			o.All = true
-		case "--harness", "--project", "--since", "--role", "--limit", "--session":
+		case "--harness", "--project", "--since", "--role", "--limit", "--session", "--sort":
 			if i+1 >= len(args) {
 				return o, fmt.Errorf("%s needs value", a)
 			}
@@ -2500,6 +2503,11 @@ func parseSearch(args []string) (search.Options, error) {
 					return o, fmt.Errorf("--limit needs an integer from 1 to 100")
 				}
 				o.Limit = n
+			case "--sort":
+				if v != sortUpdated {
+					return o, fmt.Errorf("--sort takes updated — %q is not an order mss knows", v)
+				}
+				o.Sort = v
 			default:
 				d, err := parseDur(v)
 				if err != nil {
@@ -2557,7 +2565,7 @@ var (
 
 var searchFlags = []string{
 	"--json", "--re", "--all", "--rebuild", "--sessions", "--no-refresh",
-	"--harness", "--project", "--since", "--role", "--limit", "--session",
+	"--harness", "--project", "--since", "--role", "--limit", "--session", "--sort",
 	"--exclude", "--exclude-self",
 }
 
@@ -3313,7 +3321,7 @@ func ensureError(dir string, err error) error {
 // legitimately contain one.
 var searchValueFlags = map[string]bool{
 	"--harness": true, "--project": true, "--since": true,
-	"--role": true, "--limit": true,
+	"--role": true, "--limit": true, "--sort": true,
 }
 
 func splitEqualsForms(args []string) []string {
@@ -3439,6 +3447,11 @@ func resolveSearchExcludes(dir string, ids []string, nonce string, noRefresh boo
 // wants an unbounded page.
 const sessionsListCap = 500
 
+// sortUpdated is the one order --sort knows: newest last-updated first. A
+// reader asking "how did this end" needs the newest sessions on the first
+// screen, and the list's own order — hits first — answers the other question.
+const sortUpdated = "updated"
+
 // orderSessionsForList turns the retrieval set into the candidate list: what
 // the hits already proved matched, in hit order, then whatever else matched
 // by identity order. Hits prove the match — a session the scorer saw and
@@ -3447,6 +3460,10 @@ const sessionsListCap = 500
 // hits stay sorted but unranked behind them. The --session filter, which the
 // scorer honours while building hits, is re-applied: retrieval hands back
 // every matching session and the filter only bound the hits.
+//
+// --sort updated replaces that order with last-updated first, over the whole
+// list. It runs before the cap, so the rows a capped list drops are the
+// oldest ones.
 func orderSessionsForList(dir string, ss []model.Session, hits []search.Hit, o search.Options, result index.SearchResult) (listed []model.Session, capped bool, total int) {
 	byKey := make(map[string]model.Session, len(ss))
 	for _, s := range ss {
@@ -3489,6 +3506,19 @@ func orderSessionsForList(dir string, ss []model.Session, hits []search.Hit, o s
 		return rest[i].ID < rest[j].ID
 	})
 	listed = append(listed, rest...)
+	if o.Sort == sortUpdated {
+		// Identity breaks ties, the same way `last` orders sessions that
+		// share a stamp: a map walked for `rest` is not an order.
+		sort.Slice(listed, func(i, j int) bool {
+			if !listed[i].Updated.Equal(listed[j].Updated) {
+				return listed[i].Updated.After(listed[j].Updated)
+			}
+			if listed[i].Harness != listed[j].Harness {
+				return listed[i].Harness < listed[j].Harness
+			}
+			return listed[i].ID < listed[j].ID
+		})
+	}
 	total = len(listed)
 	if len(listed) > sessionsListCap {
 		listed = listed[:sessionsListCap]

@@ -101,6 +101,12 @@ type Options struct {
 	// every matching session's metadata and where the query landed in it,
 	// without the excerpts or the hit cap. A retrieval mode, not a filter.
 	Sessions bool `json:"-"`
+	// Sort orders the candidate list. Empty is the list's own order — hits
+	// first, then the rest; "updated" is newest first, which is the order a
+	// reader asking how something ended needs, and the one that puts the
+	// session most likely to answer "is it still like that" on the first
+	// screen.
+	Sort string `json:"-"`
 	// ExcludeIDs are session ids or id prefixes the reader asked to leave
 	// out; the caller resolves them (with their lineage) into
 	// ExcludeSessions before the search runs. Kept here so the envelope can

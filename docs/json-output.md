@@ -231,13 +231,15 @@ sessions matched — without the excerpts or the hit cap. It forces JSON:
 
 `sessions` is the matching set after the same filters (`--harness`,
 `--project`, `--since`, `--role`, `--session`, `--exclude`): hits first in
-hit order, then the rest by harness and id. On the `found` tiers it is the
-whole set; on a `candidates` answer it is the relevance ranking's window —
-`total` and `capped` there describe the ranking, and past `500` rows the list
-itself stops with `capped: true`. `--re` and termless queries keep `hit_count`
-but omit `matched_indices`, which a pattern rather than terms produced.
-`hit_count` is how many records matched; `matched_indices` are their record
-numbers — each feeds `mss show <id> --harness <h> --around N` directly.
+hit order, then the rest by harness and id. `--sort updated` replaces that
+order with last-updated first — identity breaking ties — applied before the
+500-row cap, so a capped list drops the oldest rows. On the `found` tiers it
+is the whole set; on a `candidates` answer it is the relevance ranking's
+window — `total` and `capped` there describe the ranking, and past `500` rows
+the list itself stops with `capped: true`. `--re` and termless queries keep
+`hit_count` but omit `matched_indices`, which a pattern rather than terms
+produced. `hit_count` is how many records matched; `matched_indices` are their
+record numbers — each feeds `mss show <id> --harness <h> --around N` directly.
 
 `--exclude <id-or-prefix>` is repeatable and removes the session plus its
 lineage — the subagents it spawned and the forks that continue it — because

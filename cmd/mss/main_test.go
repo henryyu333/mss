@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/henryyu333/mss/internal/index"
+	"github.com/henryyu333/mss/internal/model"
 	"github.com/henryyu333/mss/internal/query"
+	"github.com/henryyu333/mss/internal/search"
 )
 
 // TestMain keeps the suite off the developer's real stores and index: a
@@ -186,6 +188,58 @@ func runCaptured(t *testing.T, f func() error) (stdout, stderr string, err error
 type envelopeRefresh struct {
 	Refreshed   bool      `json:"refreshed"`
 	LastRefresh time.Time `json:"last_refresh"`
+}
+
+// TestSessionsListSortAndIdentity pins the two things the candidate list was
+// asked for: --sort updated puts the newest first over the whole list, and
+// the list holds exactly one row per session whatever order the retrieval
+// set hands it in.
+func TestSessionsListSortAndIdentity(t *testing.T) {
+	day := func(n int) time.Time { return time.Date(2026, 1, n, 0, 0, 0, 0, time.UTC) }
+	ss := []model.Session{
+		{Harness: "omp", ID: "old", Updated: day(1)},
+		{Harness: "omp", ID: "new", Updated: day(3)},
+		{Harness: "omp", ID: "middle", Updated: day(2)},
+		// The same session delivered twice: the invariant is one row.
+		{Harness: "omp", ID: "new", Updated: day(3)},
+	}
+	hits := []search.Hit{{Session: model.Session{Harness: "omp", ID: "old"}}}
+
+	o := search.Options{Sessions: true}
+	listed, _, total := orderSessionsForList("", ss, hits, o, index.SearchResult{})
+	if total != 3 || len(listed) != 3 {
+		t.Fatalf("list = %d rows, total %d, want 3 rows for 3 sessions", len(listed), total)
+	}
+	if listed[0].ID != "old" {
+		t.Fatalf("default order = %q first, want the hit (old)", listed[0].ID)
+	}
+
+	o.Sort = sortUpdated
+	listed, _, _ = orderSessionsForList("", ss, hits, o, index.SearchResult{})
+	var got []string
+	for _, s := range listed {
+		got = append(got, s.ID)
+	}
+	if strings.Join(got, ",") != "new,middle,old" {
+		t.Fatalf("--sort updated order = %v, want [new middle old]", got)
+	}
+}
+
+// TestSortFlagRefusals keeps --sort honest: it orders the candidate list, so
+// it needs one, and it knows one order.
+func TestSortFlagRefusals(t *testing.T) {
+	_, _, err := runCaptured(t, func() error {
+		return searchWithOptions("", []string{"--sort", "updated", "q"}, "", true)
+	})
+	if err == nil || !strings.Contains(err.Error(), "--sort needs --sessions") {
+		t.Fatalf("--sort without --sessions = %v, want the refusal", err)
+	}
+	_, _, err = runCaptured(t, func() error {
+		return searchWithOptions("", []string{"--sessions", "--sort", "sideways", "q"}, "", true)
+	})
+	if err == nil || !strings.Contains(err.Error(), "--sort takes updated") {
+		t.Fatalf("--sort sideways = %v, want the refusal", err)
+	}
 }
 
 // TestNoRefreshMarksTheAnswer pins the --no-refresh contract: no refresh ran
