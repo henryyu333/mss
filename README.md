@@ -1,14 +1,15 @@
 <h1 align="center">mss</h1>
 
 <p align="center">
-  <strong>Search your AI coding history. On demand.</strong>
+  <strong>No memory system needed. Just recall your AI coding history.</strong>
 </p>
 
 <p align="center">
   <a href="https://github.com/henryyu333/mss/releases/latest"><img src="https://img.shields.io/github/v/release/henryyu333/mss?style=flat-square" alt="Release"></a>
   <a href="https://github.com/henryyu333/mss/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/henryyu333/mss/ci.yml?branch=main&label=CI&style=flat-square" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/henryyu333/mss?style=flat-square" alt="License: MIT"></a>
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-007AFF?style=flat-square" alt="Platform">
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-007AFF?style=flat-square" alt="Platform: macOS | Linux">
+  <img src="https://img.shields.io/badge/Windows-untested-lightgrey?style=flat-square" alt="Windows: untested">
 </p>
 
 <p align="center">
@@ -17,40 +18,53 @@
 
 ---
 
-**mss is an on-demand history recall engine for coding agents.** It indexes the
-sessions Claude Code, Codex, Cursor, opencode and others already leave on your
-disk, and hands back the exact turns — verbatim — when someone asks.
+**mss replaces a memory system for coding agents.** Claude Code, Codex, Cursor,
+opencode and others already write every session to your disk. mss indexes those
+transcripts, and when you type `/mss <question>` in your agent, the skill
+recalls the relevant past-session history and summarizes it into the current
+conversation — each point backed by the session id, the date and a verbatim
+quote.
 
-History is not memory. mss never remembers on its own, never recalls on its
-own, and never puts anything into a context nobody asked for. When an agent
-needs the past, it searches precisely. The rest of the time, mss does nothing.
+No memory system needed: just recall your history directly. There are no notes
+to curate, nothing writes "memories" behind your back, and nothing is injected
+into every turn. The history is already there; mss finds the right part of it
+when you ask, and does nothing the rest of the time.
+
+<p align="center">
+  <img src="docs/assets/demo.png" alt="mss searching made-up sample sessions for &quot;connection pool exhausted&quot; and reading one of them" width="820">
+</p>
+<p align="center"><sub>Screenshot made from made-up sample sessions.</sub></p>
 
 ```sh
 mss index                                   # refresh the local index
 mss "connection pool exhausted"             # where did we hit this before?
-mss show 01a00feb --around 42 --brief       # read that session around the match
+mss show 7f3a9c21 --around 3 --brief        # read that session around the match
 ```
 
-### Local only · No daemon · No MCP · Explicit recall
+### Local only · No daemon · No MCP · Manual recall
 
-- **Local only** — reads files already on your machine; no network, no upload, no account.
+- **Local only** — reads files already on your machine; no network, no telemetry, no account. See [Privacy](#privacy).
 - **No daemon** — nothing runs between invocations. No watcher, no hooks, no background writes.
 - **No MCP** — a plain CLI any agent can call through its shell; nothing to register or keep alive.
-- **Explicit recall** — it searches only when a person or a script asks. A miss says *no match*, never a near-miss dressed up as one.
+- **Manual recall** — the skill runs only when you type `/mss`. A miss says *nothing found*, never a near-miss dressed up as one.
 
-### Not memory, not a session manager
+### Why recall instead of a memory system
 
-| | Memory systems | Session managers | **mss** |
-| --- | --- | --- | --- |
-| Who it is for | the agent, automatically | a person, in a GUI | **the agent, on explicit request** |
-| When it runs | every turn | while the app is open | **only when invoked** |
-| What it returns | summaries the agent wrote | a browsable transcript | **verbatim turns, with session id and date** |
-| What it adds to context | injected recall | — | **nothing until asked** |
+| | Memory systems | **mss** |
+| --- | --- | --- |
+| Where the knowledge comes from | notes an agent decided to write | **the sessions you already had** |
+| Upkeep | curate, prune, fix stale notes | **none — the index is a rebuildable cache** |
+| When it runs | every turn, automatically | **only when you type `/mss`** |
+| What reaches the conversation | injected notes, every turn | **a summary of the relevant history, when asked** |
+| What backs it up | the note's own wording | **session id, date and verbatim quotes** |
 
 mss is one binary and one skill, and stays that way:
 
 - **the binary** is the search engine;
-- **[the skill](skills/mss/SKILL.md)** teaches an agent how to use it correctly — only on `/mss <query>`, refresh once, cite verbatim, say what it could not cover.
+- **[the skill](skills/mss/SKILL.md)** turns `/mss <question>` into a recall: it
+  refreshes the index once, searches, reads the matching sessions, and
+  summarizes what they say into the current conversation with citations — and
+  says plainly what it could not find or could not cover.
 
 ## Install
 
@@ -62,7 +76,9 @@ brew install henryyu333/tap/mss
 
 **Prebuilt binary** — download the archive for your OS from the
 [latest release](https://github.com/henryyu333/mss/releases/latest), unpack it,
-and put `mss` on your `PATH`. Each archive also carries `SKILL.md`.
+and put `mss` on your `PATH`. Each archive also carries the skill
+(`skills/mss/SKILL.md` in English, `skills/mss/SKILL.zh-CN.md` in Chinese).
+Windows archives are built but untested.
 
 **From source** (Go 1.25+)
 
@@ -78,18 +94,26 @@ stores it could not read.
 
 ## Install the skill
 
-The skill is what makes an agent use mss the right way. Copy
-[`skills/mss/`](skills/mss/) into your agent's skills directory, for example:
+The skill is what turns `/mss` into a recall. It comes in two languages with the
+same behaviour; install **one** of them as `SKILL.md` in your agent's skills
+directory. For Claude Code:
 
 ```sh
 mkdir -p ~/.claude/skills/mss
+
+# English
 curl -fsSL https://raw.githubusercontent.com/henryyu333/mss/main/skills/mss/SKILL.md \
+  -o ~/.claude/skills/mss/SKILL.md
+
+# or Chinese (still saved as SKILL.md)
+curl -fsSL https://raw.githubusercontent.com/henryyu333/mss/main/skills/mss/SKILL.zh-CN.md \
   -o ~/.claude/skills/mss/SKILL.md
 ```
 
-Then ask for history explicitly: `/mss why did we drop the redis cache`.
-The skill never fires on ordinary conversation, even when it says "before" or
-"we discussed".
+Other agents that read `SKILL.md` skills take the same file in their own skills
+directory. Then ask for history explicitly: `/mss why did we drop the redis
+cache`. The skill never fires on ordinary conversation, even when it says
+"before" or "we discussed".
 
 ## Commands
 
@@ -143,9 +167,41 @@ their fixtures are described in [`docs/registry/`](docs/registry/).
 
 Useful environment variables: `MSS_INDEX_DIR` (index location),
 `MSS_STORES` (stores to read), `MSS_STORE_TIMEOUT` (per-store read budget),
-`MSS_INCLUDE_SUBAGENTS`, plus the per-harness root overrides above.
+`MSS_INCLUDE_SUBAGENTS`, `MSS_EXCLUDE_PROJECTS`, `MSS_NO_REDACT`, plus the
+per-harness root overrides above.
 
 Internals are described in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+## Privacy
+
+- **It runs locally.** mss reads session files already on your disk and writes
+  only its own index. It opens no network connections and has no telemetry,
+  analytics or update check. The only programs it starts are the local
+  `sqlite3`, `zstd` and `git`.
+- **The index is redacted plaintext.** It is the directory
+  `~/.cache/mss/index.db`, with a lock file `~/.cache/mss/index.db.lock` beside
+  it (or `$MSS_INDEX_DIR` and `$MSS_INDEX_DIR.lock` if you set that variable).
+  API keys, tokens and password-shaped strings are replaced while indexing;
+  everything else is stored as plain text, not encrypted, and protected only by
+  file permissions (directory `0700`, files `0600`). Redaction is
+  pattern-based, so a secret in an unusual format can slip through.
+- **What you recall reaches your agent's model.** When `/mss` runs, the
+  recalled history goes into the agent's conversation, so it is sent to the
+  model provider that agent uses — usually a cloud service — like anything else
+  in the chat. mss itself sends nothing anywhere.
+- **Turning redaction off.** `MSS_NO_REDACT=1` stores text unredacted, and it
+  takes effect only on a full rebuild: `MSS_NO_REDACT=1 mss index --rebuild`.
+  The unredacted copy stays until you rebuild without it: `mss index --rebuild`.
+- **Keeping projects out.** Project patterns in `~/.config/mss/exclude` (one
+  per line; a `harness:<name>` line skips a whole store) or in
+  `MSS_EXCLUDE_PROJECTS` keep those sessions out of the index; run
+  `mss index --rebuild` to drop sessions that were indexed before.
+- **Deleting the index.** `rm -rf ~/.cache/mss` (or `rm -rf "$MSS_INDEX_DIR"
+  "$MSS_INDEX_DIR.lock"`). It is only a cache: your session files are not
+  touched, and the next `mss index` builds it again.
+
+See [`SECURITY.md`](SECURITY.md) to report a vulnerability or a secret that
+redaction missed.
 
 ## License
 
