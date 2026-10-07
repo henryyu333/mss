@@ -2,58 +2,101 @@ package index
 
 import (
 	"fmt"
+	"hash/crc32"
 	"hash/fnv"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"time"
 	"unicode/utf8"
 )
 
-// Long-lived processes (the MCP server foremost) call read-only retrieval
-// dozens of times per session; decoding the manifest and a thousand session
-// metas on every call is pure waste. The cache is keyed by manifest.gob's
-// mtime+size — which the atomic swap usually changes, and not always: a
-// rewrite that keeps the size and lands inside one tick of the filesystem's
-// timestamp resolution leaves the pair identical. So a writer in this process
-// drops the entry itself (writeManifest), and the stamp is what catches a
-// rewrite by another process.
+// Read-only retrieval asks for the manifest several times per command;
+// decoding the manifest and a thousand session metas on every call is pure
+// waste, so the decoded Manifest is cached per process.
+//
+// The cache is validated by file identity and by content. mtime+size alone is
+// not enough: a rewrite that keeps the size and lands inside one tick of the
+// filesystem's timestamp resolution (common on overlayfs and tmpfs, where the
+// kernel stamps files from a coarse clock) leaves the pair identical, and the
+// cache then answers from the manifest before it — a corrupted manifest reads
+// as whole. So a lookup checks three things before trusting the decoded copy:
+//
+//   - the same file (os.SameFile): every write goes through temp file + rename,
+//     so any committed rewrite, of either manifest.gob or the sessions.gob
+//     written just before it, arrives as a new inode;
+//   - the same mtime and size, as before;
+//   - the same CRC-32C of manifest.gob's bytes, which catches a same-size,
+//     same-tick rewrite in place. CRC-32C is hardware-accelerated on amd64
+//     and arm64, so hashing even a multi-megabyte manifest costs well under a
+//     millisecond — far less than the gob decode it saves.
+//
+// A writer in this process still drops the entry itself (writeManifest).
 //
 // Contract: the cached Manifest is shared — read-only paths must not mutate
 // it. Ingestion keeps using readManifest directly.
 var manifestCache struct {
-	mu    sync.Mutex
-	dir   string
-	mtime time.Time
-	size  int64
-	m     Manifest
-	ok    bool
+	mu  sync.Mutex
+	dir string
+	fi  os.FileInfo
+	sum uint32
+	m   Manifest
+	ok  bool
+}
+
+var castagnoli = crc32.MakeTable(crc32.Castagnoli)
+
+// manifestFingerprint opens manifest.gob once and returns its FileInfo and
+// the CRC-32C of its contents.
+func manifestFingerprint(dir string) (os.FileInfo, uint32, error) {
+	f, err := os.Open(filepath.Join(dir, "manifest.gob"))
+	if err != nil {
+		return nil, 0, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, 0, err
+	}
+	h := crc32.New(castagnoli)
+	if _, err := io.Copy(h, f); err != nil {
+		return nil, 0, err
+	}
+	return fi, h.Sum32(), nil
+}
+
+func sameManifestFile(a, b os.FileInfo) bool {
+	return a != nil && b != nil && os.SameFile(a, b) &&
+		a.ModTime().Equal(b.ModTime()) && a.Size() == b.Size()
 }
 
 func readManifestCached(dir string) (Manifest, error) {
-	// Plain stat: a failure here falls through to readManifest, which waits the
-	// swap out itself, so a wait added here cannot be made to fail (#1319).
-	fi, err := os.Stat(filepath.Join(dir, "manifest.gob"))
+	// A failed read falls through to readManifest, which waits an in-flight
+	// swap out itself, so a wait added here cannot be made to fail.
+	fi, sum, err := manifestFingerprint(dir)
 	if err != nil {
 		return readManifest(dir)
 	}
 	manifestCache.mu.Lock()
 	if manifestCache.ok && manifestCache.dir == dir &&
-		manifestCache.mtime.Equal(fi.ModTime()) && manifestCache.size == fi.Size() {
+		manifestCache.sum == sum && sameManifestFile(manifestCache.fi, fi) {
 		m := manifestCache.m
 		manifestCache.mu.Unlock()
 		return m, nil
 	}
 	manifestCache.mu.Unlock()
+	// readManifest opens the file again. If a swap lands in between, the
+	// stored fingerprint belongs to the older file, so the next lookup
+	// misses and decodes again: one wasted decode, never a stale answer.
 	m, err := readManifest(dir)
 	if err != nil {
 		return m, err
 	}
 	manifestCache.mu.Lock()
-	manifestCache.dir, manifestCache.mtime, manifestCache.size = dir, fi.ModTime(), fi.Size()
+	manifestCache.dir, manifestCache.fi, manifestCache.sum = dir, fi, sum
 	manifestCache.m, manifestCache.ok = m, true
 	manifestCache.mu.Unlock()
 	return m, nil
