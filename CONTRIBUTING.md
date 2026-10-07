@@ -56,6 +56,9 @@ lists them. In short:
 ## Style
 
 - Comments explain why, not what.
+- `#NNNN` references in code comments (for example `#1692`) are issue numbers
+  from the upstream [deja-vu](https://github.com/vshulcz/deja-vu) project that
+  mss is derived from, not issues in this repository.
 - User-facing messages are lowercase sentences that name the exact command to
   run next.
 - Keep commits focused, with a subject line like `search: say "1 match"`.
