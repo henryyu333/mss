@@ -30,11 +30,8 @@ func seedVersionStore(t *testing.T, was int) (dir string) {
 	t.Setenv("MSS_CLAUDE_ROOT", claudeRoot)
 	t.Setenv("MSS_CODEX_ROOT", filepath.Join(tmp, "no-codex"))
 	t.Setenv("MSS_OPENCODE_DB", filepath.Join(tmp, "no-opencode.db"))
-	t.Setenv("MSS_GEMINI_ROOT", filepath.Join(tmp, "no-gemini"))
 	t.Setenv("MSS_CURSOR_ROOT", filepath.Join(tmp, "no-cursor"))
 	t.Setenv("MSS_CURSOR_CLI_ROOT", filepath.Join(tmp, "no-cursor-cli"))
-	t.Setenv("MSS_ANTIGRAVITY_ROOT", filepath.Join(tmp, "no-antigravity"))
-	t.Setenv("MSS_AIDER_ROOTS", filepath.Join(tmp, "no-aider"))
 	dir = filepath.Join(tmp, "index.db")
 	if err := Ensure(dir, "claude", false, nil); err != nil {
 		t.Fatal(err)
