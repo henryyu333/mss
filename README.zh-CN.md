@@ -23,6 +23,8 @@
 
 不需要记忆系统，直接召回历史就够了。没有要维护的笔记，不会在背后偷偷写"记忆"，也不会每一轮都往上下文里塞东西。历史本来就在那里；你开口时，mss 找出相关的那一段，其余时间什么都不做。
 
+mss 派生自 [deja-vu](https://github.com/vshulcz/deja-vu)。
+
 <p align="center">
   <img src="docs/assets/demo.png" alt="mss 在虚构的示例会话里搜索 &quot;connection pool exhausted&quot; 并读取其中一个会话" width="820">
 </p>

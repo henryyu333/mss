@@ -30,6 +30,8 @@ to curate, nothing writes "memories" behind your back, and nothing is injected
 into every turn. The history is already there; mss finds the right part of it
 when you ask, and does nothing the rest of the time.
 
+mss is derived from [deja-vu](https://github.com/vshulcz/deja-vu).
+
 <p align="center">
   <img src="docs/assets/demo.png" alt="mss searching made-up sample sessions for &quot;connection pool exhausted&quot; and reading one of them" width="820">
 </p>
