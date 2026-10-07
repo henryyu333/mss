@@ -23,9 +23,7 @@ insert or replace into sessions values ('s1','w1','pool timeouts','/work/api','2
 		stmts += fmt.Sprintf("insert into messages values ('s1',%d,'user',json('{\"role\":\"user\",\"content\":\"%s\"}'),'%s');\n",
 			i, m[0], m[1])
 	}
-	if out, err := exec.Command("sqlite3", db, stmts).CombinedOutput(); err != nil {
-		t.Fatalf("sqlite3 seed: %v %s", err, out)
-	}
+	runStoreSQL(t, db, stmts)
 }
 
 // grok's database has a since-the-watermark parser wired into the registry and

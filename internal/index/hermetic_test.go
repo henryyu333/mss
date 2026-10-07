@@ -42,8 +42,12 @@ func write(t *testing.T, path, content string) {
 	}
 }
 
-// codexRolloutHead is the session_meta opener a rollout starts with.
+// codexRolloutHead is a rollout's session_meta opener plus one user turn and
+// one `go test` call: without a turn the session never reaches the index, and
+// the compression tests that count the command would pass on zero.
 const codexRolloutHead = `{"timestamp":"2026-07-31T00:00:00Z","type":"session_meta","payload":{"id":"cx-1","session_id":"cx-1","cwd":"/w/app"}}
+{"timestamp":"2026-07-31T00:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"run the tests"}]}}
+{"timestamp":"2026-07-31T00:00:02Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"go test ./...\"}","call_id":"call_1"}}
 `
 
 func writeTinyIndex(t *testing.T, dir string) {

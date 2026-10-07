@@ -22,9 +22,7 @@ insert into session values ('%[1]s','/tmp/app',%[2]d,%[2]d);
 insert into message values ('m-%[1]s','%[1]s','{"role":"user","time":{"created":%[2]d}}',%[2]d);
 insert into part values ('p-%[1]s','m-%[1]s',json_object('type','text','text','%[3]s','time',json_object('start',%[2]d)));
 `, session, createdMillis, text)
-	if out, err := exec.Command("sqlite3", db, stmts).CombinedOutput(); err != nil {
-		t.Fatalf("sqlite3 seed: %v %s", err, out)
-	}
+	runStoreSQL(t, db, stmts)
 }
 
 // A database-backed store reads only what is new — the since cursor the index
