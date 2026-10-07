@@ -1,0 +1,55 @@
+name: Bug report
+description: Something in mss or the /mss skill does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Do not paste real session content, secrets, or private paths.**
+        `mss doctor` and search output can contain your home directory, user name and project
+        names; replace them (for example with `/home/me/project`) before posting.
+        Security problems go through [SECURITY.md](https://github.com/henryyu333/mss/blob/main/SECURITY.md) instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, what you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The exact commands. A reproduction built from made-up session files is ideal.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: mss version
+      description: Output of `mss version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows (untested)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: harness
+    attributes:
+      label: Harness
+      description: Which agent's sessions are involved, if any (Claude Code, Codex CLI, Cursor, opencode, ...).
+  - type: textarea
+    id: doctor
+    attributes:
+      label: mss doctor output (redacted)
+      description: Optional. Replace user names, paths and project names first.
+      render: text

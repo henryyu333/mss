@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest a change, a new harness, or a better default.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        mss stays one binary and one skill, and runs only when someone invokes it.
+        Ideas that keep it that way are the easiest to accept.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what gets in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should mss or the skill do instead? Example commands or output help.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you tried, or other ways to solve it.
+  - type: input
+    id: harness
+    attributes:
+      label: Harness
+      description: For a new harness, its name and where it keeps sessions (describe the format; do not attach real sessions).
