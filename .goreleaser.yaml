@@ -43,8 +43,11 @@ homebrew_casks:
       owner: henryyu333
       name: homebrew-tap
       branch: main
-      # The workflow's own token cannot write to another repository.
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+      # The workflow's own token cannot write to another repository. Until a
+      # tap token is stored as a secret the release still publishes, and the
+      # cask is pushed to the tap by hand.
+      token: '{{ index .Env "HOMEBREW_TAP_GITHUB_TOKEN" }}'
+    skip_upload: '{{ if eq (index .Env "HOMEBREW_TAP_GITHUB_TOKEN") "" }}true{{ end }}'
     hooks:
       post:
         # The binary is not notarized; without this Gatekeeper refuses to run it.
