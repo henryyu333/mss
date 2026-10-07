@@ -6,6 +6,13 @@ All notable changes to mss are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-07
+
+### Added
+
+- `LICENSE` and both READMEs credit [deja-vu](https://github.com/vshulcz/deja-vu):
+  mss is derived from it, and both projects are MIT licensed.
+
 ### Changed
 
 - The README and the skill now describe mss as a replacement for a memory
@@ -49,5 +56,6 @@ First public release.
 - Prebuilt archives for macOS, Linux and Windows (Windows untested), and a
   Homebrew cask.
 
-[Unreleased]: https://github.com/henryyu333/mss/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/henryyu333/mss/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/henryyu333/mss/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/henryyu333/mss/releases/tag/v0.1.0
