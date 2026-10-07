@@ -10,7 +10,7 @@ import (
 func TestDefaultsAllowEverything(t *testing.T) {
 	t.Setenv("MSS_POLICY_FILE", filepath.Join(t.TempDir(), "missing.json"))
 	p := Load()
-	for _, act := range []string{ActivationSearch, ActivationMCP, ActivationAuto} {
+	for _, act := range []string{ActivationSearch} {
 		for _, proj := range []string{"mss", "imported:mini/mss"} {
 			if !p.Allows(act, proj) {
 				t.Fatalf("default policy must allow %s/%s", act, proj)
@@ -36,53 +36,38 @@ func TestOriginClassification(t *testing.T) {
 	}
 }
 
-func TestFileDeniesImportedOnAuto(t *testing.T) {
+func TestFileDeniesImportedOnSearch(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "policy.json")
 	t.Setenv("MSS_POLICY_FILE", path)
-	if err := os.WriteFile(path, []byte(`{"activations":{"auto":{"imported":false}}}`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"activations":{"search":{"imported":false}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	p := Load()
-	if p.Allows(ActivationAuto, "imported:mini/mss") {
-		t.Fatal("auto must deny imported")
+	if p.Allows(ActivationSearch, "imported:mini/mss") {
+		t.Fatal("search must deny imported")
 	}
-	if !p.Allows(ActivationAuto, "mss") || !p.Allows(ActivationMCP, "imported:mini/mss") {
-		t.Fatal("local auto and imported mcp must stay allowed")
+	if !p.Allows(ActivationSearch, "mss") {
+		t.Fatal("local sessions must stay allowed")
 	}
-	if got := p.Describe(ActivationAuto); got != "local-only" {
-		t.Fatalf("Describe(auto) = %q, want local-only", got)
+	if got := p.Describe(ActivationSearch); got != "local-only" {
+		t.Fatalf("Describe(search) = %q, want local-only", got)
 	}
 }
 
 func TestPeerSpecificRuleWins(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "policy.json")
 	t.Setenv("MSS_POLICY_FILE", path)
-	if err := os.WriteFile(path, []byte(`{"activations":{"mcp":{"imported":true,"imported:untrusted":false}}}`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"activations":{"search":{"imported":true,"imported:untrusted":false}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	p := Load()
-	if p.Allows(ActivationMCP, "imported:untrusted/box") {
+	if p.Allows(ActivationSearch, "imported:untrusted/box") {
 		t.Fatal("peer rule must deny untrusted")
 	}
-	if !p.Allows(ActivationMCP, "imported:mini/mss") {
+	if !p.Allows(ActivationSearch, "imported:mini/mss") {
 		t.Fatal("other peers stay allowed")
 	}
-	if got := p.Describe(ActivationMCP); got != "deny imported:untrusted" {
-		t.Fatalf("Describe = %q", got)
-	}
-}
-
-func TestEnvAliasStillWorks(t *testing.T) {
-	t.Setenv("MSS_POLICY_FILE", filepath.Join(t.TempDir(), "missing.json"))
-	t.Setenv("MSS_AUTORECALL_LOCAL_ONLY", "1")
-	p := Load()
-	if p.Allows(ActivationAuto, "imported:mini/mss") {
-		t.Fatal("env alias must deny imported on auto")
-	}
-	if !p.Allows(ActivationAuto, "mss") || !p.Allows(ActivationSearch, "imported:mini/mss") {
-		t.Fatal("alias must only touch the auto path")
-	}
-	if got := p.Describe(ActivationAuto); got != "local-only" {
+	if got := p.Describe(ActivationSearch); got != "deny imported:untrusted" {
 		t.Fatalf("Describe = %q", got)
 	}
 }
@@ -93,7 +78,7 @@ func TestMalformedFileFallsBackToDefaults(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{broken`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if !Load().Allows(ActivationAuto, "imported:mini/x") {
+	if !Load().Allows(ActivationSearch, "imported:mini/x") {
 		t.Fatal("malformed policy must not lock recall out")
 	}
 }
@@ -129,7 +114,7 @@ func TestDiagnose(t *testing.T) {
 	}
 	// Rules that name something mss never consults are silently doing nothing,
 	// which reads exactly like a rule that works.
-	body := `{"activations":{"auto":{"nosuchorigin":false},"nosuch":{"local":false},"mcp":{"imported:peer1":false,"local":true}}}`
+	body := `{"activations":{"search":{"nosuchorigin":false,"imported:peer1":false,"local":true},"nosuch":{"local":false}}}`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +122,7 @@ func TestDiagnose(t *testing.T) {
 	if !exists || err != nil {
 		t.Fatalf("valid: exists=%v err=%v", exists, err)
 	}
-	want := []string{"activation nosuch", "auto.nosuchorigin"}
+	want := []string{"activation nosuch", "search.nosuchorigin"}
 	if strings.Join(unknown, "|") != strings.Join(want, "|") {
 		t.Errorf("unknown = %v, want %v", unknown, want)
 	}

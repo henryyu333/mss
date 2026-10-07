@@ -66,7 +66,6 @@ func quote(t *testing.T, s string) string {
 // touched a file it never opened — which reaches the files listing, blame, and
 // the project the session is filed under (#2042).
 func TestATouchedPathTheRecordCannotHoldIsNotRecorded(t *testing.T) {
-	t.Setenv("MSS_INDEX_TOOL_PATHS", "1")
 	content := func(path string) (any, []byte) {
 		raw := `[{"type":"tool_use","name":"Read","input":{"file_path":` + quote(t, path) + `}}]`
 		var v any

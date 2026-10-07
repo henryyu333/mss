@@ -1313,11 +1313,12 @@ func HasRecordOfRole(dir, role string) bool {
 var betweenManifestAndRecords func()
 
 // manifestStamp identifies the generation of the store on disk. mtime and size
-// rather than Manifest.Generation: it is the pair readManifestCached already
-// keys its cache on and it needs no decode. It changes on almost any rewrite —
-// a rewrite that keeps the size and lands inside one tick of the filesystem's
-// timestamp resolution does not move it, which is why the writer drops the
-// manifest cache rather than trusting this to notice.
+// rather than Manifest.Generation: it needs no decode, and it changes on
+// almost any rewrite. A rewrite that keeps the size and lands inside one tick
+// of the filesystem's timestamp resolution does not move it; the decision
+// below falls back to the Generation in that case, and readManifestCached
+// checks the file's identity and a checksum of its bytes rather than trusting
+// this pair.
 func manifestStamp(dir string) string {
 	fi, err := os.Stat(filepath.Join(dir, "manifest.gob"))
 	if err != nil {

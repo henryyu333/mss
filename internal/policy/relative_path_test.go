@@ -22,7 +22,7 @@ func TestAPolicyIsNotReadFromWhereverMssHappensToRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A rule that would withhold everything, sitting in a checkout.
-	body := `{"activations":{"search":{"*":false},"auto":{"*":false},"mcp":{"*":false}}}`
+	body := `{"activations":{"search":{"*":false}}}`
 	if err := os.WriteFile(filepath.Join(dir, "policy.json"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}

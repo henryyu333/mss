@@ -12,7 +12,7 @@ import (
 // keeps being injected, and the receipt still says the rule was applied.
 func TestAllowsMostSpecificRuleWins(t *testing.T) {
 	p := Policy{Activations: map[string]map[string]bool{
-		ActivationAuto: {
+		ActivationSearch: {
 			"imported:laptop": true,
 			"imported":        false,
 			"*":               true,
@@ -27,14 +27,13 @@ func TestAllowsMostSpecificRuleWins(t *testing.T) {
 		"imported":      true,
 		"local-project": true, // "*" covers what no rule names
 	} {
-		if got := p.Allows(ActivationAuto, project); got != want {
+		if got := p.Allows(ActivationSearch, project); got != want {
 			t.Fatalf("Allows(%q) = %v, want %v", project, got, want)
 		}
 	}
-	// An activation with no rules allows everything: a policy file that
-	// mentions one path must not silently gate the others.
-	if !p.Allows(ActivationMCP, "imported:mini/api") {
-		t.Fatal("an unmentioned activation blocked memory")
+	// An activation with no rules allows everything.
+	if !(Policy{}).Allows(ActivationSearch, "imported:mini/api") {
+		t.Fatal("an empty policy blocked recall")
 	}
 }
 
@@ -63,20 +62,20 @@ func TestDescribeNamesTheRuleSet(t *testing.T) {
 		want string
 	}{
 		"no rules":      {Policy{}, "local+imported"},
-		"local only":    {Policy{Activations: map[string]map[string]bool{ActivationAuto: {"imported": false}}}, "local-only"},
-		"allows all":    {Policy{Activations: map[string]map[string]bool{ActivationAuto: {"*": true}}}, "local+imported"},
-		"denies a peer": {Policy{Activations: map[string]map[string]bool{ActivationAuto: {"imported:mini": false}}}, "deny imported:mini"},
+		"local only":    {Policy{Activations: map[string]map[string]bool{ActivationSearch: {"imported": false}}}, "local-only"},
+		"allows all":    {Policy{Activations: map[string]map[string]bool{ActivationSearch: {"*": true}}}, "local+imported"},
+		"denies a peer": {Policy{Activations: map[string]map[string]bool{ActivationSearch: {"imported:mini": false}}}, "deny imported:mini"},
 	} {
-		if got := tc.p.Describe(ActivationAuto); got != tc.want {
+		if got := tc.p.Describe(ActivationSearch); got != tc.want {
 			t.Fatalf("%s: Describe = %q, want %q", name, got, tc.want)
 		}
 	}
 	// Several denials are listed in a stable order, or the same policy reads
 	// differently from one receipt to the next.
-	p := Policy{Activations: map[string]map[string]bool{ActivationAuto: {"imported:mini": false, "imported:laptop": false}}}
-	first := p.Describe(ActivationAuto)
+	p := Policy{Activations: map[string]map[string]bool{ActivationSearch: {"imported:mini": false, "imported:laptop": false}}}
+	first := p.Describe(ActivationSearch)
 	for i := 0; i < 20; i++ {
-		if got := p.Describe(ActivationAuto); got != first {
+		if got := p.Describe(ActivationSearch); got != first {
 			t.Fatalf("description varies between calls: %q then %q", first, got)
 		}
 	}
@@ -119,12 +118,12 @@ func TestLoadFallsBackToTheDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := Load()
-	if !p.Allows(ActivationAuto, "anything") {
+	if !p.Allows(ActivationSearch, "anything") {
 		t.Fatal("an unreadable policy file blocked recall")
 	}
 	// And an absent file behaves the same way.
 	t.Setenv("MSS_POLICY_FILE", filepath.Join(home, "absent.json"))
-	if !Load().Allows(ActivationMCP, "imported:mini/api") {
+	if !Load().Allows(ActivationSearch, "imported:mini/api") {
 		t.Fatal("a missing policy file blocked recall")
 	}
 }

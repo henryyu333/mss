@@ -41,7 +41,6 @@ func TestADatabaseThatGrowsKeepsItsIngestCounts(t *testing.T) {
 	setHome(t, tmp)
 	t.Setenv("MSS_CLAUDE_ROOT", filepath.Join(tmp, "claude"))
 	t.Setenv("MSS_CODEX_ROOT", filepath.Join(tmp, "codex"))
-	t.Setenv("MSS_GOOSE_DB", filepath.Join(tmp, "none-goose.db"))
 	t.Setenv("MSS_OPENCODE_DB", filepath.Join(tmp, "none-opencode.db"))
 	t.Setenv("MSS_NOTES_FILE", filepath.Join(tmp, "notes.jsonl"))
 	db := filepath.Join(tmp, "grok.db")

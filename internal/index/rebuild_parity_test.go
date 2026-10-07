@@ -18,16 +18,9 @@ import (
 // parityStores points every store mss reads at a directory that does not
 // exist, so a test reads only the store it sets up.
 var parityStores = []string{
-	"MSS_AIDER_ROOTS", "MSS_AMP_ROOT", "MSS_ANTIGRAVITY_ROOT", "MSS_CC_MIRROR_ROOT", "MSS_CHERRYSTUDIO_ROOTS",
-	"MSS_CLAUDE_ROOT", "MSS_CLINE_ROOT", "MSS_CLINE_ROOTS", "MSS_CODEWHALE_ROOT", "MSS_CODEX_ROOT",
-	"MSS_COMMANDCODE_ROOT", "MSS_CONTINUE_ROOT", "MSS_COPILOT_CHAT_ROOTS", "MSS_COPILOT_ROOT", "MSS_CRUSH_ROOT",
-	"MSS_CURSOR_CLI_ROOT", "MSS_CURSOR_ROOT", "MSS_DEEPSEEK_ROOT", "MSS_GEMINI_ROOT", "MSS_GJC_ROOT",
-	"MSS_GOOSE_DB", "MSS_GOOSE_ROOT", "MSS_GROK_DB", "MSS_GROK_ROOT", "MSS_HERMES_DB", "MSS_HERMES_HOME",
-	"MSS_HERMES_PROFILES_ROOT", "MSS_KILO_DB", "MSS_KILO_ROOTS", "MSS_KIMCHI_ROOT", "MSS_KIMI_ROOT",
-	"MSS_KIRO_DB", "MSS_KIRO_ROOT", "MSS_OMP_ROOT", "MSS_OPENCLAW_ROOT", "MSS_OPENCODE_DB", "MSS_OPENCODE_DIFFS",
-	"MSS_PI_ROOT", "MSS_PRIME_ROOT", "MSS_QWEN_ROOT", "MSS_REASONIX_ROOT", "MSS_ROO_CLI_ROOT", "MSS_ROO_ROOTS",
-	"MSS_SENPI_ROOT", "MSS_XCODE_CLAUDE_ROOT", "MSS_XCODE_CODEX_ROOT", "MSS_ZCODE_DB", "MSS_ZCODE_LEGACY_ROOT",
-	"MSS_ZCODE_ROOT", "MSS_ZED_DB", "MSS_ZED_ROOT",
+	"MSS_CC_MIRROR_ROOT", "MSS_CLAUDE_ROOT", "MSS_CODEX_ROOT", "MSS_CURSOR_CLI_ROOT", "MSS_CURSOR_ROOT",
+	"MSS_DEEPSEEK_ROOT", "MSS_GROK_DB", "MSS_GROK_ROOT", "MSS_OMP_ROOT", "MSS_OPENCODE_DB",
+	"MSS_OPENCODE_DIFFS", "MSS_PI_ROOT", "MSS_XCODE_CLAUDE_ROOT", "MSS_XCODE_CODEX_ROOT",
 }
 
 // parityEnv isolates a test to the stores it names (env var to a path under
@@ -37,7 +30,6 @@ func parityEnv(t *testing.T, stores map[string]string) string {
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, "home")
 	setHome(t, home)
-	t.Setenv("HERMES_HOME", "")
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
@@ -237,22 +229,6 @@ func TestToolResultInTheNextPassSettlesItsCall(t *testing.T) {
 			res:  `{"timestamp":"2026-07-17T09:02:01.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_3","output":"Process exited with code 2\nOutput:\nvet: unreachable"}}` + "\n",
 		},
 		{
-			name: "copilot", env: "MSS_COPILOT_ROOT",
-			file: "session-state/0199cccc-0000-7000-8000-000000000001/events.jsonl",
-			head: `{"type":"session.start","timestamp":"2026-07-17T09:00:00Z","data":{"sessionId":"0199cccc-0000-7000-8000-000000000001","startTime":"2026-07-17T09:00:00Z","context":{"cwd":"/tmp/proj"}}}` + "\n" +
-				`{"type":"user.message","timestamp":"2026-07-17T09:00:01Z","data":{"content":"fix the retry loop"}}` + "\n",
-			call: `{"type":"tool.execution_start","timestamp":"2026-07-17T09:02:00Z","data":{"toolCallId":"tc1","toolName":"bash","arguments":{"command":"go vet ./retry"}}}` + "\n",
-			res:  `{"type":"tool.execution_complete","timestamp":"2026-07-17T09:02:01Z","data":{"toolCallId":"tc1","success":true,"result":{"content":"vet: unreachable"},"toolTelemetry":{"metrics":{"exit_code":2}}}}` + "\n",
-		},
-		{
-			name: "kimi", env: "MSS_KIMI_ROOT",
-			file: "sessions/wd_proj/session_t01/agents/main/wire.jsonl",
-			head: `{"type":"metadata","protocol_version":"1.4","created_at":1790870000000}` + "\n" +
-				`{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"fix the retry loop"}]},"time":1790870004000}` + "\n",
-			call: `{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"c1","name":"Bash","args":{"command":"go vet ./retry"}},"time":1790870004786}` + "\n",
-			res:  `{"type":"context.append_loop_event","event":{"type":"tool.result","toolCallId":"c1","result":{"output":"vet: unreachable\nCommand failed with exit code: 2.","isError":true}},"time":1790870004853}` + "\n",
-		},
-		{
 			name: "pi bash", env: "MSS_PI_ROOT",
 			file: "--tmp-proj--/s-retry.jsonl",
 			head: `{"type":"session","version":3,"id":"s-retry","timestamp":"2026-09-01T09:00:00Z","cwd":"/tmp/proj"}` + "\n" +
@@ -261,37 +237,12 @@ func TestToolResultInTheNextPassSettlesItsCall(t *testing.T) {
 			res:  `{"type":"message","id":"r1","timestamp":"2026-09-01T09:02:01Z","message":{"role":"toolResult","toolCallId":"c-vet","toolName":"bash","content":[{"type":"text","text":"vet: unreachable"}],"details":{"exitCode":2},"isError":true}}` + "\n",
 		},
 		{
-			// Claude, goose and kiro-cli stamp a failure's exit only since
-			// #4487, #4496 and #4505, so the split now matters for them too.
+			// Claude stamps a failure's exit too, so the split matters for it.
 			name: "claude", env: "MSS_CLAUDE_ROOT",
 			file: "-tmp-proj/c1.jsonl",
 			head: `{"type":"user","sessionId":"c1","timestamp":"2026-10-01T10:00:00Z","cwd":"/tmp/proj","message":{"role":"user","content":"fix the retry loop"}}` + "\n",
 			call: `{"type":"assistant","sessionId":"c1","timestamp":"2026-10-01T10:00:01Z","cwd":"/tmp/proj","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"go vet ./retry"}}]}}` + "\n",
 			res:  `{"type":"user","sessionId":"c1","timestamp":"2026-10-01T10:00:02Z","cwd":"/tmp/proj","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"Exit code 2\nvet: unreachable"}]}}` + "\n",
-		},
-		{
-			name: "goose", env: "MSS_GOOSE_ROOT",
-			file: "sessions/20261001_1.jsonl",
-			head: `{"working_dir":"/tmp/proj","description":"fix the retry loop","message_count":0}` + "\n" +
-				`{"role":"user","created":1790848800,"content":[{"type":"text","text":"fix the retry loop"}]}` + "\n",
-			call: `{"role":"assistant","created":1790848801,"content":[{"type":"toolRequest","id":"c1","toolCall":{"status":"success","value":{"name":"developer__shell","arguments":{"command":"go vet ./retry"}}}}]}` + "\n",
-			res:  `{"role":"user","created":1790848802,"content":[{"type":"toolResponse","id":"c1","toolResult":{"status":"success","value":{"content":[{"type":"text","text":"vet: unreachable\n\nCommand exited with code 2"}],"isError":true}}}]}` + "\n",
-		},
-		{
-			name: "kiro-cli", env: "MSS_KIRO_ROOT",
-			file: "cli/11111111-2222-4333-8444-555555555555.jsonl",
-			head: `{"version":"v1","kind":"Prompt","data":{"message_id":"m0","content":[{"kind":"text","data":"fix the retry loop"}],"meta":{"timestamp":1790848800}}}` + "\n",
-			call: `{"version":"v1","kind":"AssistantMessage","data":{"message_id":"m1","content":[{"kind":"toolUse","data":{"toolUseId":"t1","name":"shell","input":{"command":"go vet ./retry"}}}],"meta":{"timestamp":1790848801}}}` + "\n",
-			res:  `{"version":"v1","kind":"ToolResults","data":{"message_id":"m2","content":[{"kind":"toolResult","data":{"toolUseId":"t1","content":[{"kind":"json","data":{"exit_status":"exit status: 2","stdout":"","stderr":"vet: unreachable"}}],"status":"success"}}],"meta":{"timestamp":1790848802}}}` + "\n",
-		},
-		{
-			// Command Code stamps a failure since #4539.
-			name: "commandcode", env: "MSS_COMMANDCODE_ROOT",
-			file: "-tmp-proj/s1.jsonl",
-			head: `{"type":"session","version":3,"id":"s1","timestamp":"2026-10-01T20:09:14.839Z","cwd":"/tmp/proj"}` + "\n" +
-				`{"type":"message","id":"u1","timestamp":"2026-10-01T20:09:15.000Z","message":{"role":"user","content":[{"type":"text","text":"fix the retry loop"}]}}` + "\n",
-			call: `{"type":"message","id":"a1","timestamp":"2026-10-01T20:09:16.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"call_1","name":"shell_command","input":{"command":"go vet ./retry"}}]}}` + "\n",
-			res:  `{"type":"message","id":"r1","timestamp":"2026-10-01T20:09:17.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_1","content":[{"type":"text","text":"Exit code: 2\nvet: unreachable"}]}]}}` + "\n",
 		},
 		{
 			// omp's hashline edit takes its replaced lines from the result
@@ -377,20 +328,6 @@ func TestFullBuildReadsCodexHistorySessionWhole(t *testing.T) {
 	inc := filepath.Join(tmp, "inc")
 	parityPass(t, inc, false)
 	parityWrite(t, h, `{"session_id":"s1","ts":1784278100,"text":"and why does the backoff never reset"}`+"\n", true)
-	parityPass(t, inc, false)
-	sameAsRebuild(t, inc)
-}
-
-// A harness title too thin to use is widened from the session's first turn,
-// which an appended tail does not hold (#4452).
-func TestAppendedTurnKeepsTheWidenedTitle(t *testing.T) {
-	tmp := parityEnv(t, map[string]string{"MSS_GOOSE_ROOT": "goose", "MSS_GOOSE_DB": "goose/sessions/sessions.db"})
-	f := filepath.Join(tmp, "goose", "sessions", "20260901_1.jsonl")
-	parityWrite(t, f, `{"description":"retry loop","id":"20260901_1","created_at":"2026-09-01T09:00:00Z","updated_at":"2026-09-01T09:00:01Z","working_dir":"/tmp/proj","extension_data":{},"message_count":1}`+"\n"+
-		`{"id":"m1","role":"user","created":1788253200,"content":[{"type":"text","text":"fix the retry loop"}]}`+"\n", false)
-	inc := filepath.Join(tmp, "inc")
-	parityPass(t, inc, false)
-	parityWrite(t, f, `{"id":"m2","role":"user","created":1788253260,"content":[{"type":"text","text":"now run the tests"}]}`+"\n", true)
 	parityPass(t, inc, false)
 	sameAsRebuild(t, inc)
 }

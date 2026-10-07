@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// The manifest cache is keyed on manifest.gob's mtime and size, which its own
-// comment called a pair the atomic swap always changes. It is not: a rewrite
+// The manifest cache used to be keyed on manifest.gob's mtime and size alone,
+// a pair the atomic swap was assumed to always change. It does not: a rewrite
 // that keeps the size and lands inside one tick of the filesystem's timestamp
 // resolution leaves both unchanged, and every read-only surface in the process
 // — doctor's read state, the session count, friction, the brief — then answers

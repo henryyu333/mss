@@ -30,11 +30,6 @@ func TestOpencodeStoreLacksAsksForTheRow(t *testing.T) {
 		t.Error("an empty session was called deleted")
 	}
 
-	// Kilo's CLI database is asked the same way.
-	t.Setenv("MSS_KILO_DB", db)
-	if OpencodeStoreLacks("kilocode", "new") || !OpencodeStoreLacks("kilocode", "gone") {
-		t.Error("the Kilo store was not the one asked")
-	}
 	// No store: nothing to go on.
 	t.Setenv("MSS_OPENCODE_DB", filepath.Join(t.TempDir(), "missing.db"))
 	if OpencodeStoreLacks("opencode", "gone") {

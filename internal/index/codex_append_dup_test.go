@@ -32,11 +32,8 @@ func TestAppendDedupesARepeatedMessageLikeARebuild(t *testing.T) {
 		t.Setenv("MSS_CODEX_ROOT", filepath.Join(tmp, "codex"))
 		t.Setenv("MSS_CLAUDE_ROOT", filepath.Join(tmp, "no-claude"))
 		t.Setenv("MSS_OPENCODE_DB", filepath.Join(tmp, "no-opencode.db"))
-		t.Setenv("MSS_GEMINI_ROOT", filepath.Join(tmp, "no-gemini"))
 		t.Setenv("MSS_CURSOR_ROOT", filepath.Join(tmp, "no-cursor"))
 		t.Setenv("MSS_CURSOR_CLI_ROOT", filepath.Join(tmp, "no-cursor-cli"))
-		t.Setenv("MSS_ANTIGRAVITY_ROOT", filepath.Join(tmp, "no-antigravity"))
-		t.Setenv("MSS_AIDER_ROOTS", filepath.Join(tmp, "no-aider"))
 		dupPath := filepath.Join(root, "rollout-2026-06-01T05-00-00-dup-1.jsonl")
 		dir := filepath.Join(tmp, "index.db")
 		if incremental {

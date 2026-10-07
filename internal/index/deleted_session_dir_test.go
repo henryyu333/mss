@@ -36,11 +36,8 @@ func TestADeletedSessionDirectoryStaysInTheIndex(t *testing.T) {
 	t.Setenv("MSS_CLAUDE_ROOT", filepath.Join(tmp, "no-claude"))
 	t.Setenv("MSS_CODEX_ROOT", filepath.Join(tmp, "no-codex"))
 	t.Setenv("MSS_OPENCODE_DB", filepath.Join(tmp, "no-opencode.db"))
-	t.Setenv("MSS_GEMINI_ROOT", filepath.Join(tmp, "no-gemini"))
 	t.Setenv("MSS_CURSOR_ROOT", filepath.Join(tmp, "no-cursor"))
 	t.Setenv("MSS_CURSOR_CLI_ROOT", cli)
-	t.Setenv("MSS_ANTIGRAVITY_ROOT", filepath.Join(tmp, "no-antigravity"))
-	t.Setenv("MSS_AIDER_ROOTS", filepath.Join(tmp, "no-aider"))
 	dir := filepath.Join(tmp, "index.db")
 	if err := Ensure(dir, "cursor", false, nil); err != nil {
 		t.Fatal(err)
@@ -129,11 +126,8 @@ func TestAMovedSessionDirectoryIsNotKeptTwice(t *testing.T) {
 	t.Setenv("MSS_CLAUDE_ROOT", filepath.Join(tmp, "no-claude"))
 	t.Setenv("MSS_CODEX_ROOT", filepath.Join(tmp, "no-codex"))
 	t.Setenv("MSS_OPENCODE_DB", filepath.Join(tmp, "no-opencode.db"))
-	t.Setenv("MSS_GEMINI_ROOT", filepath.Join(tmp, "no-gemini"))
 	t.Setenv("MSS_CURSOR_ROOT", filepath.Join(tmp, "no-cursor"))
 	t.Setenv("MSS_CURSOR_CLI_ROOT", cli)
-	t.Setenv("MSS_ANTIGRAVITY_ROOT", filepath.Join(tmp, "no-antigravity"))
-	t.Setenv("MSS_AIDER_ROOTS", filepath.Join(tmp, "no-aider"))
 	dir := filepath.Join(tmp, "index.db")
 	if err := Ensure(dir, "cursor", false, nil); err != nil {
 		t.Fatal(err)

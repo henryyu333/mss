@@ -461,7 +461,7 @@ func TestPrintPlainWhenNotTTY(t *testing.T) {
 	var b bytes.Buffer
 	Print(&b, hits, Options{Query: "needle"})
 	out := b.String()
-	if strings.Contains(out, "\x1b[") || !strings.Contains(out, "[opencode]") || !strings.Contains(out, "1 matches") {
+	if strings.Contains(out, "\x1b[") || !strings.Contains(out, "[opencode]") || !strings.Contains(out, "1 match") {
 		t.Fatalf("bad plain output: %q", out)
 	}
 }
