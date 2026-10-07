@@ -1,44 +1,83 @@
-# mss
+<h1 align="center">mss</h1>
 
-[English](README.md) | 简体中文
+<p align="center">
+  <strong>Search your AI coding history. On demand.</strong><br>
+  <sub>按需搜索你的 AI 编程历史。</sub>
+</p>
 
-搜索你的编程 Agent 过去的会话：由你开口时才搜，而不是由 Agent 自己猜。
+<p align="center">
+  <a href="https://github.com/henryyu333/mss/releases/latest"><img src="https://img.shields.io/github/v/release/henryyu333/mss?style=flat-square" alt="Release"></a>
+  <a href="https://github.com/henryyu333/mss/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/henryyu333/mss/ci.yml?branch=main&label=CI&style=flat-square" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/henryyu333/mss?style=flat-square" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-007AFF?style=flat-square" alt="Platform">
+</p>
 
-`mss` 是一个 Go 程序。它为各个编程 Agent 已经留在本机磁盘上的会话记录建立索引，并把匹配的对话以**原文**带回来。只有你运行它时它才工作：没有后台进程，没有 Agent 自行写入的记忆，也不会把你没要求的历史塞进对话。会话文件保持在各 Agent 原来存放的位置；索引只是放在本机、随时可以重建的缓存。
+<p align="center">
+  <a href="README.md">English</a> · 简体中文
+</p>
+
+---
+
+**mss 是给编程 Agent 用的按需历史召回引擎。** 它为 Claude Code、Codex、Cursor、opencode 等已经留在你本机的会话记录建立索引，有人开口时，把相关对话**逐字原文**带回来。
+
+历史不是记忆。mss 不会自动记住，也不会自动召回，更不会往没人要的上下文里塞东西。Agent 需要历史时，精确地查；平时，mss 什么都不做。
+
+```sh
+mss index                                   # 刷新本地索引
+mss "connection pool exhausted"             # 之前在哪儿遇到过？
+mss show 01a00feb --around 42 --brief       # 在命中位置附近读那个会话
+```
+
+### 只在本机 · 没有后台进程 · 没有 MCP · 只在明确要求时召回
+
+- **只在本机**：只读你机器上已有的文件；不联网、不上传、不需要账号。
+- **没有后台进程**：两次调用之间什么都不运行；没有文件监听、没有 hooks、不在后台写入。
+- **没有 MCP**：就是一个普通命令行，任何 Agent 都能通过 shell 调用；不用注册，也不用保持运行。
+- **只在明确要求时召回**：只有人或脚本明确要求时才搜。没找到就说没找到，不拿相近结果冒充命中。
+
+### 它不是记忆系统，也不是会话管理器
+
+| | 记忆系统 | 会话管理器 | **mss** |
+| --- | --- | --- | --- |
+| 给谁用 | Agent，自动 | 人，通过图形界面 | **Agent，在明确要求时** |
+| 何时运行 | 每一轮对话 | 应用开着时 | **只在被调用时** |
+| 返回什么 | Agent 自己写的摘要 | 可浏览的会话记录 | **逐字原文，附会话 id 和日期** |
+| 往上下文里加什么 | 自动注入的召回 | — | **没人要求就什么都不加** |
+
+mss 始终只是一个 binary 加一个 skill：
+
+- **binary** 是搜索引擎；
+- **[skill](skills/mss/SKILL.md)** 教 Agent 正确使用它：只在 `/mss <内容>` 时运行、只刷新一次索引、逐字引用、说明没覆盖到的部分。
 
 ## 安装
+
+**Homebrew**（macOS、Linux）
+
+```sh
+brew install henryyu333/tap/mss
+```
+
+**预编译二进制**：从 [最新 Release](https://github.com/henryyu333/mss/releases/latest) 下载对应系统的压缩包，解压后把 `mss` 放进 `PATH`。每个压缩包里也带了 `SKILL.md`。
+
+**从源码安装**（Go 1.25+）
 
 ```sh
 go install github.com/henryyu333/mss/cmd/mss@latest
 ```
 
-或者从源码目录构建：
+运行时依赖：存在 SQLite 里的数据源（opencode、Cursor、Grok）通过 `sqlite3` 命令读取；zstd 压缩的记录（较新的 Codex rollout、DeepSeek Harness）通过 `zstd` 命令读取。macOS 自带 `sqlite3`，`brew install zstd` 可以补上另一个。缺少它们时 mss 照常运行，`mss doctor` 会列出读不了的数据源。
+
+## 安装 skill
+
+让 Agent 用对 mss 靠的是 skill。把 [`skills/mss/`](skills/mss/) 复制到你的 Agent 的 skills 目录，例如：
 
 ```sh
-make build   # 生成 ./mss
+mkdir -p ~/.claude/skills/mss
+curl -fsSL https://raw.githubusercontent.com/henryyu333/mss/main/skills/mss/SKILL.md \
+  -o ~/.claude/skills/mss/SKILL.md
 ```
 
-以 SQLite 存储的数据源（opencode、Cursor）通过 `PATH` 上的 `sqlite3` 命令读取；其他 Agent 的记录都是普通文件。不依赖 CGO。
-
-## 快速上手
-
-```sh
-mss index                          # 建立或更新索引
-mss "connection pool exhausted"    # 搜索全部会话
-mss --harness claude --since 30d "panic in indexer"
-mss last 20 --role user            # 最近二十条用户消息
-mss show 01a00feb --harness codex  # 按 id 前缀读取一个会话
-mss ctx "schema migration rollback" > context.md
-mss sources                        # 读取了哪些数据源、各有多少内容
-```
-
-没有匹配时会直接说明，不会拿相近的结果冒充。每条结果带一个 `tier`：
-- `exact`：精确匹配；
-- `close` / `stemmed`：拼写纠正或词形归一后的匹配；
-- `relevance`：只是按词重叠排出的最近邻，**不是真正的匹配**；
-- `error`：按错误签名匹配。
-
-真正没找到是 `tier: "exact", total: 0`。`--json` 输出同样的结构供脚本解析，字段说明见 [`docs/json-output.md`](docs/json-output.md)（英文）。
+之后明确地要历史：`/mss 当时为什么去掉了 redis 缓存`。普通对话里即使出现"之前""我们讨论过"，skill 也不会触发。
 
 ## 命令
 
@@ -53,6 +92,8 @@ mss sources                        # 读取了哪些数据源、各有多少内�
 | `mss sources` | mss 会读的每个数据源，以及会话数和消息数 |
 | `mss doctor [--json] [--deep]` | 安装情况、找到了什么、哪些没读到 |
 | `mss version` | 版本信息 |
+
+每条结果带一个 `tier`：`exact` 是精确匹配；`close` / `stemmed` 是拼写纠正或词形归一后的匹配；`relevance` 只是按词重叠排出的最近邻，**不是真正的匹配**；`error` 是按错误签名匹配。真正没找到是 `tier: "exact", total: 0`。`--json` 输出同样的结构供脚本解析，字段说明见 [`docs/json-output.md`](docs/json-output.md)（英文）。
 
 ## 支持的 Agent
 
@@ -73,19 +114,11 @@ mss sources                        # 读取了哪些数据源、各有多少内�
 
 - **索引只是缓存。** `mss index` 读取会话文件，在 `~/.cache/mss/index.db` 里存一份脱敏副本，并增量更新：只是变长的记录从上次安全的位置接着读，发生变化的数据源会替换它涉及的会话。删掉索引的代价只是重建一次。
 - **写入时脱敏。** API key、token 和看起来像密码的字符串在建索引时就被替换，所以 `show` 和 `ctx` 不会把它们返回出来。`mss doctor` 会报告每个数据源读到了什么，包括读不了的行。
-- **数据不出本机。** 没有任何网络功能：没有后台进程、不上传、没有 MCP 服务、没有 hooks。搜索只是对本机文件的本地查询。
+- **从不改写会话文件。** 会话文件留在各 Agent 原来存放的位置，mss 只读不写。
 
 常用环境变量：`MSS_INDEX_DIR`（索引位置）、`MSS_STORES`（读取哪些数据源）、`MSS_STORE_TIMEOUT`（每个数据源的读取时限）、`MSS_INCLUDE_SUBAGENTS`，以及上面提到的各数据源路径变量。
 
-## 给 Agent 使用
-
-`mss` 设计为**只在明确要求时**运行：由人输入 `/mss <内容>`，或由脚本明确调用。它和记忆系统正好相反：没人要求时，什么都不搜、不注入、不记住；Agent 得出的结论也不会被保存。
-
-[`skills/mss/SKILL.md`](skills/mss/SKILL.md) 是配套的 skill：
-1. 开头只刷新一次索引（`mss index --quiet`）；之后所有查询带 `--no-refresh`，不再刷新、不抢写锁；
-2. 用 `search --sessions --no-refresh --sort updated` 一次列出候选会话（最新在前）；
-3. 用 `show --brief --no-refresh` 批量浏览命中的窗口，再用 `show --json --around` 细读需要逐字引用的原文；
-4. 按时间线汇报：每条结论注明 Agent、日期和会话 id（引用逐字），标出后来被推翻的决定和转述，说明这次搜索没覆盖到的部分（JSON 结果里的 `coverage` 和索引最后刷新时间）；涉及"现在怎么样"的句子只来自当次只读核对，并单独成节。
+内部实现见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)（英文）。
 
 ## 许可证
 

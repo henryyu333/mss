@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,7 +27,21 @@ import (
 	"github.com/henryyu333/mss/internal/sources"
 )
 
+// version is stamped by the release build (-ldflags "-X main.version=…").
+// `go install …@vX.Y.Z` cannot pass ldflags, so an unstamped binary falls back
+// to the module version Go recorded — the tag, or a pseudo-version for a
+// checkout build — and says dev only when Go recorded nothing.
 var version = "dev"
+
+func buildVersion() string {
+	if version != "dev" {
+		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		return bi.Main.Version
+	}
+	return version
+}
 
 // errAlreadySaid exits non-zero for a command that has already told the reader
 // what went wrong. Without it the choice was between a silent success and the
@@ -229,7 +244,7 @@ func cmdVersion(_ string, rest []string) error {
 	if len(rest) > 0 {
 		return fmt.Errorf("version takes no arguments — got %q", rest[0])
 	}
-	fmt.Fprintf(os.Stdout, "mss %s\n", version)
+	fmt.Fprintf(os.Stdout, "mss %s\n", buildVersion())
 	return nil
 }
 

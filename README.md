@@ -1,49 +1,95 @@
-# mss
+<h1 align="center">mss</h1>
 
-English | [简体中文](README.zh-CN.md)
+<p align="center">
+  <strong>Search your AI coding history. On demand.</strong>
+</p>
 
-Search your coding agents' past sessions — when you ask, not when they guess.
+<p align="center">
+  <a href="https://github.com/henryyu333/mss/releases/latest"><img src="https://img.shields.io/github/v/release/henryyu333/mss?style=flat-square" alt="Release"></a>
+  <a href="https://github.com/henryyu333/mss/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/henryyu333/mss/ci.yml?branch=main&label=CI&style=flat-square" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/henryyu333/mss?style=flat-square" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-007AFF?style=flat-square" alt="Platform">
+</p>
 
-`mss` is one Go binary that indexes the session transcripts your coding agents
-already leave on disk and brings the matching turns back as **original text**.
-It runs only when you run it: no background daemon, no memory the agent writes
-on its own, no recall injected into a conversation nobody asked for. Your
-sessions stay where the harnesses put them; the index is a local, rebuildable
-cache beside them.
+<p align="center">
+  English · <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+---
+
+**mss is an on-demand history recall engine for coding agents.** It indexes the
+sessions Claude Code, Codex, Cursor, opencode and others already leave on your
+disk, and hands back the exact turns — verbatim — when someone asks.
+
+History is not memory. mss never remembers on its own, never recalls on its
+own, and never puts anything into a context nobody asked for. When an agent
+needs the past, it searches precisely. The rest of the time, mss does nothing.
+
+```sh
+mss index                                   # refresh the local index
+mss "connection pool exhausted"             # where did we hit this before?
+mss show 01a00feb --around 42 --brief       # read that session around the match
+```
+
+### Local only · No daemon · No MCP · Explicit recall
+
+- **Local only** — reads files already on your machine; no network, no upload, no account.
+- **No daemon** — nothing runs between invocations. No watcher, no hooks, no background writes.
+- **No MCP** — a plain CLI any agent can call through its shell; nothing to register or keep alive.
+- **Explicit recall** — it searches only when a person or a script asks. A miss says *no match*, never a near-miss dressed up as one.
+
+### Not memory, not a session manager
+
+| | Memory systems | Session managers | **mss** |
+| --- | --- | --- | --- |
+| Who it is for | the agent, automatically | a person, in a GUI | **the agent, on explicit request** |
+| When it runs | every turn | while the app is open | **only when invoked** |
+| What it returns | summaries the agent wrote | a browsable transcript | **verbatim turns, with session id and date** |
+| What it adds to context | injected recall | — | **nothing until asked** |
+
+mss is one binary and one skill, and stays that way:
+
+- **the binary** is the search engine;
+- **[the skill](skills/mss/SKILL.md)** teaches an agent how to use it correctly — only on `/mss <query>`, refresh once, cite verbatim, say what it could not cover.
 
 ## Install
+
+**Homebrew** (macOS, Linux)
+
+```sh
+brew install henryyu333/tap/mss
+```
+
+**Prebuilt binary** — download the archive for your OS from the
+[latest release](https://github.com/henryyu333/mss/releases/latest), unpack it,
+and put `mss` on your `PATH`. Each archive also carries `SKILL.md`.
+
+**From source** (Go 1.25+)
 
 ```sh
 go install github.com/henryyu333/mss/cmd/mss@latest
 ```
 
-Or from a checkout:
+Runtime tools: stores kept in SQLite (opencode, Cursor, Grok) are read through
+the `sqlite3` CLI, and zstd-compressed transcripts (newer Codex rollouts,
+DeepSeek Harness) through the `zstd` CLI. macOS ships `sqlite3`; `brew install
+zstd` covers the other. Without them mss still runs and `mss doctor` names the
+stores it could not read.
+
+## Install the skill
+
+The skill is what makes an agent use mss the right way. Copy
+[`skills/mss/`](skills/mss/) into your agent's skills directory, for example:
 
 ```sh
-make build   # writes ./mss
+mkdir -p ~/.claude/skills/mss
+curl -fsSL https://raw.githubusercontent.com/henryyu333/mss/main/skills/mss/SKILL.md \
+  -o ~/.claude/skills/mss/SKILL.md
 ```
 
-The SQLite-backed stores (opencode, Cursor) are read through the `sqlite3` CLI
-on `PATH`; every other harness is plain files. There is no CGO dependency.
-
-## Quick start
-
-```sh
-mss index                          # build or update the index
-mss "connection pool exhausted"    # search everything
-mss --harness claude --since 30d "panic in indexer"
-mss last 20 --role user            # the last twenty user turns
-mss show 01a00feb --harness codex  # read one session, by id prefix
-mss ctx "schema migration rollback" > context.md
-mss sources                        # what stores it reads, and what they hold
-```
-
-A query that matches nothing says so instead of guessing: results carry a
-`tier` — `exact`, plus `close`/`stemmed` for spelling-corrected and word-form
-matches; `relevance` for a nearest-neighbour ranking (no real match);
-`error` for signature matches — so a caller never mistakes a neighbour for a
-real hit. A true miss is `tier: "exact", total: 0`. `--json` returns the same envelope a script can parse; the schema is
-documented in [`docs/json-output.md`](docs/json-output.md).
+Then ask for history explicitly: `/mss why did we drop the redis cache`.
+The skill never fires on ordinary conversation, even when it says "before" or
+"we discussed".
 
 ## Commands
 
@@ -58,6 +104,13 @@ documented in [`docs/json-output.md`](docs/json-output.md).
 | `mss sources` | Every store mss looks at, with session and message counts |
 | `mss doctor [--json] [--deep]` | What is installed, what it found, and what it could not read |
 | `mss version` | Build identity |
+
+Every result carries a `tier` — `exact`, plus `close`/`stemmed` for
+spelling-corrected and word-form matches; `relevance` for a nearest-neighbour
+ranking (no real match); `error` for signature matches — so a caller never
+mistakes a neighbour for a real hit. A true miss is `tier: "exact", total: 0`.
+`--json` returns the same envelope a script can parse; the schema is in
+[`docs/json-output.md`](docs/json-output.md).
 
 ## Supported harnesses
 
@@ -85,29 +138,14 @@ their fixtures are described in [`docs/registry/`](docs/registry/).
 - **Secrets are redacted on the way in.** API keys, tokens and password-shaped
   strings are replaced during ingest, so `show` and `ctx` never hand them back.
   `mss doctor` reports what a store yielded, including lines it could not read.
-- **Nothing leaves the machine.** There is no network surface: no daemon, no
-  upload, no MCP server, no hooks. Search is a local lookup over a local file.
+- **Session files are never written.** They stay where each harness put them;
+  mss only reads them.
 
 Useful environment variables: `MSS_INDEX_DIR` (index location),
 `MSS_STORES` (stores to read), `MSS_STORE_TIMEOUT` (per-store read budget),
 `MSS_INCLUDE_SUBAGENTS`, plus the per-harness root overrides above.
 
-## Agents
-
-`mss` is built to be driven **only on explicit request** — a person typing
-`/mss <query>`, or a script that says so. The point of the design is the
-opposite of a memory system: nothing is searched, injected, or remembered until
-someone asks, and nothing the agent concludes is saved.
-
-[`skills/mss/SKILL.md`](skills/mss/SKILL.md) is the skill that drives it:
-refresh the index once (`mss index --quiet`), then list the candidate sessions
-with `search --sessions --no-refresh --sort updated`, scan windows with
-`show --brief --no-refresh`, read the passages that matter with
-`show --json --around`, and report a timeline that cites harness, date and
-session id (and quotes verbatim), marks later reversals and paraphrases,
-states what the search could not cover (`coverage` in the JSON envelope), and
-keeps any "how it stands now" sentence tied to a current read-only check
-instead of to the history.
+Internals are described in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## License
 

@@ -1,0 +1,57 @@
+version: 2
+
+project_name: mss
+
+builds:
+  - main: ./cmd/mss
+    binary: mss
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    # The skill ships beside the binary: the binary is the engine, the skill is
+    # what teaches an agent to drive it on explicit request only.
+    files:
+      - LICENSE
+      - README.md
+      - README.zh-CN.md
+      - skills/mss/SKILL.md
+
+checksum:
+  name_template: checksums.txt
+
+homebrew_casks:
+  - name: mss
+    binaries: [mss]
+    homepage: https://github.com/henryyu333/mss
+    description: Search your AI coding history. On demand.
+    license: MIT
+    # Compressed Codex and DeepSeek transcripts are read through the zstd CLI.
+    dependencies:
+      - formula: zstd
+    repository:
+      owner: henryyu333
+      name: homebrew-tap
+      branch: main
+      # The workflow's own token cannot write to another repository.
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    hooks:
+      post:
+        # The binary is not notarized; without this Gatekeeper refuses to run it.
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/mss"]
+          end
+
+changelog:
+  sort: asc
