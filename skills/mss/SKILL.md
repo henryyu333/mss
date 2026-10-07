@@ -1,79 +1,80 @@
 ---
 name: mss
-description: "只读搜索本机历史 Agent Session（mss 索引），把与关键词最相关的旧对话原文临时带回当前会话。仅在用户显式输入 /mss <内容> 时使用；用户未显式调用时绝不使用，也不因普通对话出现『之前』『我们讨论过』等词而触发。"
+description: "Recall relevant past-session history from this machine's agent sessions (the mss index, read-only) and summarize it into the current conversation, with session ids, dates and verbatim quotes. Use ONLY when the user explicitly types /mss <query>. Never use it otherwise, and never trigger on ordinary mentions such as \"before\" or \"we discussed\"."
 hide: true
 ---
 
-# mss（手动历史会话搜索）
+# mss (manual recall of past sessions)
 
-把过去 Session 的相关**原文**临时带回当前对话。只有用户显式输入 `/mss <内容>` 才运行；普通聊天、以及"之前 / 我们讨论过 / 某项目名"等词的提及，都不构成触发理由。
+No memory system needed: recall the history that bears on the question straight from past sessions and **summarize it into the current conversation**, every point backed by its source (harness, date, session id) and a verbatim quote. Run only when the user explicitly types `/mss <query>`. Ordinary chat, and words like "before", "we discussed" or a project name, are never a reason to run.
 
-## 硬约束
+## Hard rules
 
-- 只允许的**写**：mss 自己的索引。禁止改写 / 删除任何 Session 文件，禁止写 memory、PROJECT.md 或其他文件，禁止 resume / 切换旧 Session。
-- 索引**只在开头刷新一次**（`mss index --quiet`）；之后所有 search / show 都带 `--no-refresh`：直接读现有索引，不抢写锁，并行命令互不排队。漏掉它就会退回"先刷新再回答"，又回到排队等待。
-- 找不到足够证据就说"没有找到"，列出试过的词，不得补全历史。
-- 检索读 `--json` 信封，按 `docs/json-output.md` 的字段读答案；批量浏览用 `show --brief`；引用原文时以 `--json` 读到的逐字文本为准。
+- The only write allowed is mss's own index. Never modify or delete a session file, never write memory, PROJECT.md or any other file, never resume or switch to an old session.
+- Refresh the index **once, at the start** (`mss index --quiet`). Every later search or show carries `--no-refresh`: it reads the index as it is, takes no write lock, and parallel commands never queue behind each other. Leaving it out falls back to "refresh, then answer" and the queueing comes back.
+- Without enough evidence, say "nothing found" and list the terms you tried. Never fill in history.
+- Read answers from the `--json` envelope, using the fields described in `docs/json-output.md`; browse in bulk with `show --brief`; when quoting, the verbatim text read through `--json` is authoritative.
 
-## 步骤
+## Steps
 
-1. **定范围**：从 `/mss` 的内容里拆出项目名、时间范围、线索（人名 / 术语 / 命令 / 原话）。内容有歧义时（同一个词可能指不同项目或对象）先问一次再搜。默认先在当前项目或用户指明的项目里找；证据不足再扩大范围，并在汇报里说明扩大了。
+1. **Scope**: split the `/mss` text into project names, time range and clues (names, terms, commands, exact phrases). If it is ambiguous (one word could mean different projects or things), ask once before searching. Start with the current project or the one the user named; widen only when the evidence is thin, and say in the summary that you widened.
 
-2. **nonce 先落地，再刷新一次索引**：先单独跑一条命令，把随机标记打印进转录：
+2. **Print a nonce first, then refresh the index once**: run one command on its own so a random marker lands in the transcript:
    ```bash
    echo "mss-nonce: $(uuidgen | tr 'A-F' 'a-f' | cut -c1-12)"
    ```
-   从输出里读出**字面值**（例：`7f3a91c2d4e8`），后面每条命令都写字面值、不用变量。然后**只跑这一次**刷新：
+   Read the **literal value** from its output (e.g. `7f3a91c2d4e8`) and write that literal, not a variable, in every later command. Then run the refresh **this one time**:
    ```bash
    mss index --quiet
    ```
-   成功时 stdout 上没有输出，等它返回即可（无变化时约 1–2 秒）；stderr 上的"跳过某文件 / 某源读不到"不算失败，那是在说明覆盖缺口。
-   - nonce 必须在 `mss index` **之前**已写进转录（这条 `echo` 的命令行和输出），`--exclude-self` 才能在不刷新的搜索里认出当前窗口。
-   - 若某次搜索的 coverage 显示 `self_requested` 存在而 `self_excluded` 缺席（转录落盘时序不同），只补一次 `mss index --quiet`，再原样重跑该搜索即可；不要每次都重刷。
+   On success it prints nothing on stdout; just wait for it to return (about 1–2 seconds when nothing changed). Messages on stderr about a skipped file or an unreadable store are not failures; they describe coverage gaps.
+   - The nonce must already be in the transcript (the `echo` command line and its output) **before** `mss index`, so `--exclude-self` can recognise the current window in searches that do not refresh.
+   - If a search's coverage shows `self_requested` but no `self_excluded` (the transcript reached disk late), run `mss index --quiet` once more and rerun that same search. Do not refresh before every search.
 
-3. **检索词**：自行扩展同义词、中英文变体和相关名词，准备 2–3 组查询。同一批查询一次跑完，不要为同一批候选反复小查询。
+3. **Queries**: expand synonyms, English/Chinese variants and related nouns yourself, and prepare 2–3 queries. Run one batch together; don't re-query the same candidates in small pieces.
 
-4. **列候选（一次拿全）**：
+4. **List candidates (all at once)**:
    ```bash
    mss search --sessions --no-refresh --sort updated --exclude-self 7f3a91c2d4e8 "<query>"
    ```
-   - `--sort updated` 按最后更新时间从新到旧排。用户问"最后怎么样了 / 怎么处理了 / 现在什么状态"时，**先读最上面（最新）的几条**，再按需要细读；不要只挑 `hit_count` 大的——关键会话可能命中很少、项目名还是别的目录。
-   - `--sessions` 的输出本来就是 JSON 信封，不必再加 `--json`。
-   - 单行是硬要求：mss 有意不索引多行命令（heredoc、多行脚本被当作"说的都在产出里"）。要解析 JSON 就写成同一行的 `python3 -c '…'`；能用 `--brief` 就不必解析 JSON。
-   - 另有要排除的 session 用 `--exclude <id-or-prefix>`（可重复），它会连带排除其子代理与分叉。
-   - 读信封：`match` 是 `found` / `candidates` / `none`；`coverage.self_requested` 存在而 `self_excluded` 缺席表示当前会话没能排除（此时 `complete` 为 `false`），汇报时必须说明"当前会话未排除"，不得静默。`coverage` 里 `unread`（存在的源没读到；没有该 harness 的数据不算） / `skipped` / `clipped` 说明本次检索没覆盖的部分，`complete: true` 表示无缺口。
-   - `refresh.refreshed` 为 `false` 表示这次没有刷新索引，`refresh.last_refresh` 是索引最后刷新时间；汇报覆盖范围时用它说明索引截止到什么时候。
-   - `sessions` 是匹配全集（`found` 时不受条数上限，最多 500 行并以 `capped` 说明），每行有 session 元数据、`hit_count` 和 `matched_indices`（记录序号，与 `show` 同一套编号；`--re` 或无检索词的查询只有 `hit_count`）。
-   - 加过滤器收窄：`--project` / `--since` / `--harness` / `--role`。
+   - `--sort updated` orders by last update, newest first. When the user asks "how did it end / how was it handled / where does it stand", **read the top (newest) few first**, then go deeper as needed. Don't just pick the largest `hit_count`: the key session may have few hits and sit in a differently named directory.
+   - `--sessions` output is already a JSON envelope; no need for `--json`.
+   - One line is a hard requirement: mss deliberately does not index multi-line commands (heredocs and multi-line scripts are treated as "the output says it all"). To parse JSON, use a one-line `python3 -c '…'`; where `--brief` is enough, don't parse JSON at all.
+   - To leave out another session, use `--exclude <id-or-prefix>` (repeatable); it also drops that session's subagents and forks.
+   - Reading the envelope: `match` is `found` / `candidates` / `none`. `coverage.self_requested` present with `self_excluded` absent means the current session could not be excluded (`complete` is then `false`); the summary must say "current session not excluded", never silently. In `coverage`, `unread` (a store that exists but was not read; a harness with no data does not count), `skipped` and `clipped` describe what this search did not cover; `complete: true` means no gaps.
+   - `refresh.refreshed: false` means this call did not refresh the index; `refresh.last_refresh` is when it was last refreshed. Use it to say how current the index is.
+   - `sessions` is the full match set (for `found` it ignores the row limit, up to 500 rows, with `capped` saying so). Each row carries session metadata, `hit_count` and `matched_indices` (record positions, numbered the same way as `show`; `--re` and term-less queries have only `hit_count`).
+   - Narrow with filters: `--project` / `--since` / `--harness` / `--role`.
 
-5. **批量浏览，再挑重点细读**：
+5. **Browse in bulk, then read the important parts closely**:
    ```bash
    mss show <id-prefix> --harness <name> --no-refresh --brief --around <index> --limit 40
    ```
-   - `--brief` 每条消息一行头部（index、role、time）+ 截断正文，一次读一整个窗口，不用自己写脚本格式化。
-   - 只看某一方视角：加 `--role user` 或 `--role assistant`（可重复）。
-   - 截断处会标明"用某条命令读整条"。需要**逐字引用**或看完整正文时，再用 `--json` 读同一窗口（`window.clipped: true` 表示窗口里有消息被索引截断，需要更后面的内容就加大 `--limit` 或改用 `--offset`）：
+   - `--brief` prints one header line per message (index, role, time) plus a shortened body, a whole window at a time, with no formatting script needed.
+   - For one side only, add `--role user` or `--role assistant` (repeatable).
+   - Each cut says which command reads the whole message. When you need a **verbatim quote** or the full body, read the same window with `--json` (`window.clipped: true` means a message in the window was clipped by the index; for later content raise `--limit` or use `--offset`):
    ```bash
    mss show <id-prefix> --harness <name> --no-refresh --json --around <index> --limit 40
    ```
-   - 候选太多时说明读了哪些、跳过了哪些、为什么跳过。`mss last` / `mss ctx` 不支持 `--no-refresh`，会先刷新索引，本流程不用它们。
+   - With many candidates, say which you read, which you skipped, and why. `mss last` and `mss ctx` do not support `--no-refresh` and refresh the index first; this workflow does not use them.
 
-6. **现状核对（只读，仅当用户在问"现在"）**：对相关仓库做只读查询回答"现在怎么样了"：
+6. **Current-state check (read-only, only when the user asks about "now")**: answer "where does it stand now" with read-only queries against the relevant repository:
    ```bash
    git -C <repo> status --short; git -C <repo> log --oneline -5; git -C <repo> rev-list --count <a>..<b>
    ```
-   要求：只运行只读命令，禁止修改、commit 或 push 任何东西；核对结果写进汇报单独的"当前状态（非历史记录）"一节。
+   Run read-only commands only; never modify, commit or push anything. Put the results in a separate "Current state (not history)" section.
 
-7. **汇报**：
-   - 按时间线写；每条结论附 harness、日期、session id 和原文引用。session id 写完整（或足以区分同前缀会话的前缀）——曾有两条不同会话都写成 `01a0f11c` 而被误当成重复行。
-   - **引用必须逐字**：引号里的必须是原文逐字摘录，不得拼接、不得增删字，也不得把两处文本合成一句。需要概括时写"大意：……"，不加引号。
-   - 历史原话和基于历史的推断分开写，不得混为一谈。
-   - **原始 vs 转述**：同一线索在多处出现时，只有「用户消息里、日期最早」的那次算原始讨论；之后 agent 消息里的同句或改写是转述，标注「转述」并指明它指向哪次原始讨论，不得当成独立证据。最早一次本身就是 agent 说的就注明，不得伪装成用户原话。
-   - **现状只来自现状核对**：汇报里凡是描述现在状态（worktree 是否存在、分支在哪、是否合并或上线）的句子，必须来自当次只读核对；历史会话里的说法只能写成"当时（<日期>）是……"，不得写成现状。
-   - 单独的"当前状态（非历史记录）"一节：列出当次核对用的命令和结果，并说明本次没有修改任何文件。
-   - 被后来推翻的决定标"已被 <session/日期> 推翻"。
-   - 结尾写覆盖范围：搜了哪些词和项目、读了几个 session、`coverage` 里的缺口、索引最后刷新时间（`refresh.last_refresh`）、当前会话是否已排除。
+7. **Summarize into the current conversation**:
+   - Open with a few sentences that answer the user's `/mss` question directly. This is the summary of the recalled history that lets the current conversation carry on; the sourced details follow.
+   - Write in chronological order; every conclusion carries harness, date, session id and a quote. Write session ids in full (or a prefix long enough to tell sessions with the same prefix apart). Two different sessions were once both written as `01a0f11c` and mistaken for a duplicate row.
+   - **Quotes must be verbatim**: text inside quotation marks is an exact excerpt. No splicing, no added or dropped words, no merging two passages into one sentence. When you paraphrase, write "Gist: …" without quotation marks.
+   - Keep what was said in the history apart from what you infer from it.
+   - **Original vs. retelling**: when a clue appears in several places, only the earliest occurrence in a user message counts as the original discussion. Later identical or reworded sentences in agent messages are retellings: mark them "retelling", say which original they point to, and never count them as independent evidence. If the earliest occurrence was itself said by the agent, say so; never present it as the user's words.
+   - **The present comes only from the current-state check**: any sentence about the present (whether a worktree exists, where a branch is, whether something was merged or shipped) must come from this run's read-only check. Claims in old sessions can only be written as "at the time (<date>) it was …", never as the current state.
+   - A separate "Current state (not history)" section lists the commands used for the check and their results, and states that nothing was modified.
+   - Mark decisions that were later reversed as "reversed by <session/date>".
+   - End with coverage: terms and projects searched, number of sessions read, gaps reported in `coverage`, when the index was last refreshed (`refresh.last_refresh`), and whether the current session was excluded.
 
-8. **Fallback（仅当 coverage 报告某数据源未读时）**：只有 `coverage.unread` 指明某 harness 的数据源这次没读到，才允许对**该数据源的原始目录**做只读 `rg`（`rg -l --hidden --no-ignore`），并在汇报中说明。其它情况一律以 mss 为准；`match: "none"` 就是没有找到，不 fallback。
+8. **Fallback (only when coverage reports an unread store)**: only when `coverage.unread` names a harness store that was not read this time may you run a read-only `rg` (`rg -l --hidden --no-ignore`) over **that store's raw directory**, and you must say so in the summary. Otherwise mss is authoritative; `match: "none"` means nothing found, with no fallback.
 
-- 若 `mss` 不在 PATH 或索引为空，直接说历史搜索不可用，不要臆造结果。
+- If `mss` is not on PATH or the index is empty, say history recall is unavailable. Never make up results.

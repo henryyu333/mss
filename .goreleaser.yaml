@@ -26,6 +26,7 @@ archives:
       - README.md
       - README.zh-CN.md
       - skills/mss/SKILL.md
+      - skills/mss/SKILL.zh-CN.md
 
 checksum:
   name_template: checksums.txt
