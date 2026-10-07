@@ -80,29 +80,6 @@ scoring. `--role` is applied while reading candidate records.
 
 Regex search scans records because arbitrary regex cannot use token postings safely.
 
-`mss blame` retrieves candidates using the basename stem through the existing token
-postings, then verifies the basename as a path component or standalone word in the
-candidate text. Full and longer suffix path mentions outrank bare basenames; mention
-counts are blended with recency and an absolute project-root match receives a boost.
-
-`mss blame <path>:<line>` answers about one line before that listing. Git names the
-commit that last changed the line; the session is the one whose `edit` record
-replaced the same text that commit shows as deleted, which is what makes the claim
-"this session performed this change" rather than "this session was open nearby".
-Spans are compared on whitespace-collapsed text and only from 24 runes up, since
-`}` and `return nil` are in every diff. Where no session matches, or git cannot
-answer, the line gets one sentence saying which silence it is — including the line
-count when the line is past the end of the file. No reason is printed with it: over
-81 attributed lines the session's own conclusion overlapped the change 0 times, so a
-line lifted out of a session would read as the reason for a change it has nothing to
-do with.
-
-`--attribution` serves that answer alone, and with `--json` as one object naming the
-rule that answered (`replaced` or `wrote`); `--git-note` writes it to
-`refs/notes/mss`, idempotently and only where a session is named. Every shape mss
-prints that names a file arrives with its recogniser in `internal/search`, since a
-transcript keeps what mss printed and blame reads transcripts.
-
 ## Incremental algorithm
 
 `currentFiles` records path, size, and mtime for known stores.

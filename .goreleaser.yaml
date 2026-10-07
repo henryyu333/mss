@@ -35,7 +35,9 @@ homebrew_casks:
   - name: mss
     binaries: [mss]
     homepage: https://github.com/henryyu333/mss
-    description: Search your AI coding history. On demand.
+    # Homebrew wants a short desc (80 characters or fewer, no trailing period),
+    # so this is the repository description cut down to what fits.
+    description: "Recall and summarize past AI coding sessions, no memory system needed"
     license: MIT
     # Compressed Codex and DeepSeek transcripts are read through the zstd CLI.
     dependencies:
