@@ -711,7 +711,7 @@ func doctorTools(w io.Writer) {
 	if _, err := exec.LookPath("git"); err == nil {
 		gitStatus = "found"
 	}
-	fmt.Fprintf(w, "  %-12s %s (needed for changed-file notes, worktree names and the task signal)\n", "git", gitStatus)
+	fmt.Fprintf(w, "  %-12s %s (needed for changed-file notes and worktree names)\n", "git", gitStatus)
 }
 
 // policyWithheldCounts reports, per activation, how many indexed sessions the
@@ -723,7 +723,7 @@ func policyWithheldCounts(dir string) (map[string]int, int) {
 	}
 	pol := policy.Load()
 	out := map[string]int{}
-	for _, activation := range []string{policy.ActivationSearch, policy.ActivationMCP, policy.ActivationAuto} {
+	for _, activation := range []string{policy.ActivationSearch} {
 		for _, m := range metas {
 			if !pol.Allows(activation, m.Project) {
 				out[activation]++
@@ -762,34 +762,18 @@ func unmatchedImportGroups(dir string) []string {
 	return out
 }
 
-// doctorPolicy reports the one mechanism that separates local memory from
-// imported. Load falls back to the permissive default on any error, so a
-// malformed file changed nothing and said nothing, and a working one was
-// invisible — leaving no place at all to find out what the rules are (#661).
+// doctorPolicy reports the recall policy: which sessions a search may return
+// and which directories are never recalled. Load falls back to the permissive
+// default on any error, so a malformed file changed nothing and said nothing,
+// and a working one was invisible; this is the one place to find out what the
+// rules are.
 func doctorPolicy(w io.Writer, dir string) {
-	fmt.Fprintln(w, "Trust policy:")
+	fmt.Fprintln(w, "Recall policy:")
 	exists, unknown, err := policy.Diagnose()
 	if !exists {
-		// …unless the environment restricts it anyway. Deciding on the file's
-		// absence said "every origin activates everywhere" while the auto path
-		// was local-only, on the one screen someone opens to find out what is
-		// allowed (#939).
-		if pol := policy.Load(); pol.Describe(policy.ActivationAuto) != "local+imported" {
-			fmt.Fprintf(w, "  %-12s %s\n", "default", noPolicyFileLine())
-			withheld, total := policyWithheldCounts(dir)
-			for _, activation := range []string{policy.ActivationSearch, policy.ActivationMCP, policy.ActivationAuto} {
-				line := pol.Describe(activation)
-				if n := withheld[activation]; n > 0 {
-					line += fmt.Sprintf(" — withholds %d of %d indexed session%s", n, total, pluralS(total))
-				}
-				fmt.Fprintf(w, "  %-12s %s\n", activation, line)
-			}
-			fmt.Fprintf(w, "  %-12s MSS_AUTORECALL_LOCAL_ONLY is set in this environment\n", "from env")
-			return
-		}
-		fmt.Fprintf(w, "  %-12s %s — every origin activates everywhere\n", "default", noPolicyFileLine())
-		// Except one thing, which is in force with or without a file and is
-		// the reason a directory can be missing from recall (#2050).
+		fmt.Fprintf(w, "  %-12s %s — every indexed session can be recalled\n", "default", noPolicyFileLine())
+		// The ignore list is in force with or without a file, and it is the
+		// reason a directory can be missing from recall.
 		printIgnored(w, policy.Load(), dir)
 		return
 	}
@@ -797,29 +781,26 @@ func doctorPolicy(w io.Writer, dir string) {
 		// The permissive default is what is actually in force, and that is the
 		// part worth saying out loud: the file reads like a restriction.
 		fmt.Fprintf(w, "  %-12s %s: %v\n", "unreadable", reportPath(policy.Path()), err)
-		fmt.Fprintf(w, "  %-12s every origin activates everywhere until it parses\n", "in force")
+		fmt.Fprintf(w, "  %-12s every indexed session can be recalled until it parses\n", "in force")
 		return
 	}
 	pol := policy.Load()
 	withheld, total := policyWithheldCounts(dir)
-	for _, activation := range []string{policy.ActivationSearch, policy.ActivationMCP, policy.ActivationAuto} {
-		line := pol.Describe(activation)
-		// The rule's text is not its effect. `search local-only` reads the
-		// same whether it withholds nothing or the whole index, and doctor is
-		// where someone checks that the rule does what they meant (#978).
-		if n := withheld[activation]; n > 0 {
-			line += fmt.Sprintf(" — withholds %d of %d indexed session%s", n, total, pluralS(total))
-		}
-		fmt.Fprintf(w, "  %-12s %s\n", activation, line)
+	line := pol.Describe(policy.ActivationSearch)
+	// The rule's text is not its effect. `search local-only` reads the same
+	// whether it withholds nothing or the whole index, and doctor is where
+	// someone checks that the rule does what they meant.
+	if n := withheld[policy.ActivationSearch]; n > 0 {
+		line += fmt.Sprintf(" — withholds %d of %d indexed session%s", n, total, pluralS(total))
 	}
+	fmt.Fprintf(w, "  %-12s %s\n", policy.ActivationSearch, line)
 	printIgnored(w, pol, dir)
 	for _, u := range unknown {
 		fmt.Fprintf(w, "  %-12s %q is not an activation or origin mss consults — this rule does nothing\n", "ignored", u)
 	}
 	// An `imported:x` rule has the right shape and still matches nothing when
 	// no session came from a project starting with x — the group is a project
-	// prefix from the exporting machine, not a machine name, and a rule
-	// written for a machine reads as in force forever (#955).
+	// prefix from the exporting machine, not a machine name.
 	for _, g := range unmatchedImportGroups(dir) {
 		fmt.Fprintf(w, "  %-12s %q matches nothing in this index — the part after `imported:` is the first path component of the project on the machine it came from, not that machine's name\n", "inert", g)
 	}

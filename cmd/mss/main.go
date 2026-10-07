@@ -1861,17 +1861,15 @@ func commandsMatchingWords(dir string, terms []string) int {
 	return n
 }
 
-// howOfferLine is the half of the hint that offers `mss how`.
+// howOfferLine is the half of the hint that offers a command-role search.
 //
-// The words go over as words: `mss how` ANDs its arguments and a quoted
-// phrase becomes one term it then requires contiguously, so quoting the whole
-// query handed over a command that answers "no command on this machine
-// mentions …" under a line that had just counted three (#2768).
+// The words go over as words: a quoted phrase becomes one term required
+// contiguously, so quoting the whole query would hand over a search that
+// misses under a line that had just counted three.
 func howOfferLine(n int, match string, terms []string) string {
 	// A term can start with a dash — someone asking about `-run` or `--limit`
-	// — and `mss how` would read it as a flag it does not have, or as one it
-	// does and swallow the next word. The command's own escape says the rest
-	// is the query.
+	// — and the search would read it as a flag. `--` says the rest is the
+	// query.
 	dashed := ""
 	for _, t := range terms {
 		if strings.HasPrefix(t, "-") {
@@ -1879,7 +1877,7 @@ func howOfferLine(n int, match string, terms []string) string {
 			break
 		}
 	}
-	return fmt.Sprintf("mss: %d command%s this machine ran %s it — `mss how %s%s`\n",
+	return fmt.Sprintf("mss: %d command%s this machine ran %s it — `mss search --role command %s%s`\n",
 		n, pluralS(n), match, dashed, pasteSafeWords(terms))
 }
 

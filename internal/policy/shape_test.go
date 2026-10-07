@@ -28,12 +28,12 @@ func TestDiagnoseNamesAKeyMssDoesNotConsult(t *testing.T) {
 	}{
 		{
 			name: "a shape from somewhere else",
-			body: `{"rules":[{"project":"work","auto":"deny"}]}`,
+			body: `{"rules":[{"project":"work","search":"deny"}]}`,
 			want: "rules",
 		},
 		{
 			name: "the right idea under the wrong name",
-			body: `{"activation":{"auto":{"local":false}}}`,
+			body: `{"activation":{"search":{"local":false}}}`,
 			want: "activation",
 		},
 	} {
@@ -52,7 +52,7 @@ func TestDiagnoseNamesAKeyMssDoesNotConsult(t *testing.T) {
 
 // The keys mss does consult stay quiet.
 func TestDiagnoseIsQuietOnAFileItUnderstands(t *testing.T) {
-	policyAt(t, `{"activations":{"auto":{"local":false}},"ignore":["/tmp/scratch"]}`)
+	policyAt(t, `{"activations":{"search":{"local":false}},"ignore":["/tmp/scratch"]}`)
 	_, unknown, err := Diagnose()
 	if err != nil {
 		t.Fatal(err)

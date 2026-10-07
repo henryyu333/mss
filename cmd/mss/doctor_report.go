@@ -151,7 +151,7 @@ func collectDoctorPolicy(dir string) doctorPolicyReport {
 	pol := policy.Load()
 	withheld, total := policyWithheldCounts(dir)
 	r.Total = total
-	for _, a := range []string{policy.ActivationSearch, policy.ActivationMCP, policy.ActivationAuto} {
+	for _, a := range []string{policy.ActivationSearch} {
 		r.Activations[a] = doctorPolicyRule{Rule: pol.Describe(a), Withheld: withheld[a]}
 	}
 	r.Ignored = unknown

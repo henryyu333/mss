@@ -1,9 +1,8 @@
-// Package policy decides what memory activates where. Recall crossing a
-// machine boundary was the launch thread's top concern; instead of one env
-// var, a small explicit table: per activation (search, mcp, auto), which
-// origins (local, imported, imported:<group>) may inject. Defaults allow
-// everything, matching prior behavior; MSS_AUTORECALL_LOCAL_ONLY=1 stays as
-// an alias for denying imported memory on the auto path.
+// Package policy decides which indexed sessions a search may return. mss only
+// recalls when it is asked, so there is a single activation, "search": for it
+// the policy file can deny origins (local, imported, imported:<group>), and it
+// lists directories whose sessions are never recalled. Defaults allow
+// everything.
 package policy
 
 import (
@@ -17,11 +16,9 @@ import (
 	"github.com/henryyu333/mss/internal/sources"
 )
 
-const (
-	ActivationSearch = "search"
-	ActivationMCP    = "mcp"
-	ActivationAuto   = "auto"
-)
+// ActivationSearch is the only path mss recalls on: an explicit search, show
+// or ctx that a person or a script ran.
+const ActivationSearch = "search"
 
 // Policy maps activation → origin rules. A missing activation allows every
 // origin. Origin keys: "local", "imported" (anything that arrived by sync) and
@@ -61,22 +58,13 @@ func Path() string {
 	return filepath.Join(base, "mss", "policy.json")
 }
 
-// Load reads the policy file and folds in the env alias. Any read or parse
+// Load reads the policy file. Any read or parse
 // failure means the default policy — recall must not break because a config
 // file is malformed; doctor is the place to complain.
 func Load() Policy {
 	var p Policy
 	if b, err := os.ReadFile(Path()); err == nil {
 		_ = json.Unmarshal(b, &p)
-	}
-	if os.Getenv("MSS_AUTORECALL_LOCAL_ONLY") == "1" {
-		if p.Activations == nil {
-			p.Activations = map[string]map[string]bool{}
-		}
-		if p.Activations[ActivationAuto] == nil {
-			p.Activations[ActivationAuto] = map[string]bool{"local": true}
-		}
-		p.Activations[ActivationAuto]["imported"] = false
 	}
 	return p
 }
@@ -95,8 +83,8 @@ func Origin(project string) string {
 	return "local"
 }
 
-// Allows reports whether memory from the session's origin may activate on
-// this path. Most specific rule wins: imported:<group> over imported over the
+// Allows reports whether a session from this origin may be recalled on this
+// path. Most specific rule wins: imported:<group> over imported over the
 // activation default (allow).
 func (p Policy) Allows(activation, project string) bool {
 	rules := p.Activations[activation]
@@ -114,23 +102,6 @@ func (p Policy) Allows(activation, project string) bool {
 	}
 	if v, ok := rules["*"]; ok {
 		return v
-	}
-	return true
-}
-
-// AllowsEgress reports whether a project's content may leave the machine.
-//
-// Every activation is a read path on this box; sending text to an embedding
-// endpoint is not, and no rule describes it. Borrowing the loosest of the three
-// let a machine refuse to show a session to its own agent and ship the same text
-// to a third party in the same breath (#1311) — `search` is usually the most
-// permissive rule there is, because a person's own terminal is theirs. So egress
-// needs agreement: content the owner withholds on any path stays here.
-func (p Policy) AllowsEgress(project string) bool {
-	for _, a := range []string{ActivationSearch, ActivationMCP, ActivationAuto} {
-		if !p.Allows(a, project) {
-			return false
-		}
 	}
 	return true
 }
@@ -228,7 +199,7 @@ func Diagnose() (exists bool, unknown []string, err error) {
 		return true, nil, jerr
 	}
 	// The whole shape, before the keys inside it. A file written from memory or
-	// from another tool's config — `{"rules":[{"project":…,"auto":"deny"}]}` —
+	// from another tool's config — `{"rules":[{"project":…,"search":"deny"}]}` —
 	// parses into an empty policy, denies nothing, and read exactly like a rule
 	// that works, while the checks below only ever looked inside `activations`
 	// (#2504).
@@ -246,7 +217,7 @@ func Diagnose() (exists bool, unknown []string, err error) {
 	// is silently doing nothing, which reads exactly like a rule that works.
 	for activation, rules := range p.Activations {
 		switch activation {
-		case ActivationSearch, ActivationMCP, ActivationAuto:
+		case ActivationSearch:
 		default:
 			unknown = append(unknown, "activation "+activation)
 			continue
