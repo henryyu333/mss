@@ -22,7 +22,7 @@ performed or is implied.
 | Index compatibility | v0.2.0 public binary's index read by candidate with no rebuild; manifest digest unchanged | PASS |
 | Synthetic benchmark | 64 / 2,000 / 10,000 sessions, four formats; precision 1.0 / recall 1.0 on 13 frozen labels, zero false positives; fault injection PASS | PASS — [benchmarks](benchmarks.md) |
 | Six release targets | `darwin/linux/windows × amd64/arm64` cross-compile with release ldflags; Windows test binaries compile | PASS (compile only) |
-| Release validator | 8 stdlib unit tests; full archive rehearsal (see below) | PASS locally |
+| Release validator | 8 stdlib unit tests; full local rehearsal over a manually packaged six-target bundle of the committed tree: eight artifacts, SHA256, safe paths, six binary headers, native darwin/arm64 version + all four embedded skill installs in both languages | PASS locally (GoReleaser packaging on CI still pending) |
 | Workflow configs | `.goreleaser.yaml`, `ci.yml`, `release.yml` parse as YAML; release gated on three-OS reusable CI + native archive validation | Syntax PASS; remote execution pending |
 
 ## Fixed during this remediation
