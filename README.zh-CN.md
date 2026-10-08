@@ -6,7 +6,7 @@
 
 MSS 为本机已有、格式受支持的会话记录建立索引。你可以直接用 CLI 搜索，也可以明确要求 Agent 执行随附的 Skill。Skill 搜索并读取相关会话，再根据证据总结，附上会话 ID、日期和逐字引用。它必须区分命中、候选、未找到和覆盖不完整，不维护整理后的“记忆”，也不在每轮对话中注入历史。
 
-**v0.3.0 已发布**，新增显式 `install-skill` 命令；源码构建的 Homebrew Formula 会在发布后随即进入 tap。归档未签名、未经公证，macOS 可能按你的安全流程阻止下载的二进制；真实外部用户的交互式宿主验收仍待完成。详见[安装指南](docs/install.md)与[发布证据](docs/release-v0.3.0.md)。
+**v0.3.0 已发布**，新增显式 `install-skill` 命令，并在 tap 中提供源码构建的 Homebrew Formula。归档未签名、未经公证，macOS 可能按你的安全流程阻止下载的二进制；真实外部用户的交互式宿主验收仍待完成。详见[安装指南](docs/install.md)与[发布证据](docs/release-v0.3.0.md)。
 
 ## 虚构数据演示
 
@@ -45,7 +45,7 @@ mss install-skill <claude|codex|pi|omp> [--language en|zh-CN]
 
 Codex 安装包含禁止隐式调用的 `agents/openai.yaml`；只复制 `SKILL.md` 不算完整安装。安装后重启宿主。Claude 使用 `/mss <问题>`，Pi/OMP 使用 `/skill:mss <问题>`，Codex 使用 Skill 选择器。RC 实测：Pi 与 OMP 的 `/skill:mss`、Codex 显式读取 Skill 文件均在真实模型中完成端到端召回；Claude Code 因本机自动化环境无凭据而未验证（PENDING）；TUI 交互仍未验证。详见[宿主证据与手动控制](docs/skill-compatibility.md)，其中也说明了无法可靠控制调用时，如何明确要求读取指定 Skill 文件。
 
-固定版本的安装、可选 `sqlite3`/`zstd`、PATH、更新、回滚和卸载步骤见[安装指南](docs/install.md)。Homebrew 安装源码构建的 Formula（`brew install --formula henryyu333/tap/mss`）；v0.3.0 Formula 会在本次发布后随即进入 tap，历史 v0.2.0 Cask 用户按该指南的分阶段迁移操作。
+固定版本的安装、可选 `sqlite3`/`zstd`、PATH、更新、回滚和卸载步骤见[安装指南](docs/install.md)。Homebrew 安装源码构建的 Formula：`brew install --formula henryyu333/tap/mss`；历史 v0.2.0 Cask 用户按该指南的分阶段迁移操作。
 
 ## 命令与结果判断
 

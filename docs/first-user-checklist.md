@@ -8,12 +8,12 @@ do not send private sessions or credentials to a model provider or issue tracker
 
 Use [installation](install.md), [host evidence](skill-compatibility.md), and
 [synthetic benchmark methodology](benchmarks.md) as the reproducible references.
-v0.3.0 is published; its release URLs and the release-attached Formula artifact
-now exist, with the tap update following the release. The checklist below is
-still **unexecuted by a real external human**: RC-stage headless model
-invocations (Pi, OMP, Codex; Claude Code had no credentials on the release
-machine) are recorded in [release gates](release-v0.3.0.md), but they do not
-replace TUI sessions and independent first-user acceptance.
+v0.3.0 is published; its release URLs and the source Formula in the tap now
+exist. The checklist below is still **unexecuted by a real external human**:
+RC-stage headless model invocations (Pi, OMP, Codex; Claude Code had no
+credentials on the release machine) are recorded in
+[release gates](release-v0.3.0.md), but they do not replace TUI sessions and
+independent first-user acceptance.
 
 ## Record the environment before starting
 

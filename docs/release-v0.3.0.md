@@ -5,12 +5,11 @@ does not. It exists so promotion decisions are made from evidence, not from
 README confidence. The original remediation evidence was measured on 2026-10-08;
 the distribution-preparation evidence below is recorded separately.
 
-**Release status:** v0.3.0 is released from the commit this document ships in,
-after the v0.3.0-rc.1 prerelease exercised the complete tag-triggered release
-workflow. The final tag runs the same workflow on this content; the
-published-asset verification and example Homebrew Formula publication are
-appended in a follow-up commit to main. The earlier baselines (`633fb76f`, then
-`1db0ab6` with
+**Release status:** v0.3.0 was released from the commit this document ships in
+(tag `v0.3.0` on `12e6ab0`), after the v0.3.0-rc.1 prerelease exercised the
+complete tag-triggered release workflow. The final tag ran the same workflow on
+this content; the published-asset verification and the tap publication are
+appended below. The earlier baselines (`633fb76f`, then `1db0ab6` with
 [CI run 37793748699](https://github.com/henryyu333/mss/actions/runs/37793748699))
 remain recorded below.
 
@@ -84,6 +83,25 @@ skipped.
 | Host invocation — Claude Code 2.1.284 | This machine's automation context has no Claude Code credentials (no credentials file, no keychain item; the CLI reports "Not logged in"), so no model invocation was possible | PENDING |
 | TUI sessions | None of the four hosts was driven through its TUI picker or slash command | PENDING [first-user checklist](first-user-checklist.md) |
 
+## Final release verification (2026-10-09)
+
+`v0.3.0` was tagged on `12e6ab0` and published by
+[run 37813213821](https://github.com/henryyu333/mss/actions/runs/37813213821):
+all eight jobs (three `checks` legs, `package`, three `archives` legs,
+`publish`) passed on the first attempt, and the GitHub release is a full
+release (`isPrerelease: false`) with ten assets.
+
+| Check | Observed evidence | Result |
+| --- | --- | --- |
+| Published assets | All ten assets downloaded; `python3 tools/verify-release.py verify --dist <downloaded> --tag v0.3.0` against the `12e6ab0` checkout: eight artifacts, SHA256, safe paths, source/asset/metadata bytes, six binary headers, native `mss 0.3.0`, all embedded installs | PASS |
+| Real artifact E2E | `mss_0.3.0_darwin_arm64.tar.gz` (SHA256 `0b1a86419944ea654b42ac7f7f1fdd67111f24e9cb7f8b03ed43fd7629bfde45`): binary reports `mss 0.3.0`; isolated index/search on synthetic Claude history returned the exact session; `install-skill omp` wrote the version-matched skill, identical reinstall succeeded, and a locally modified skill was refused with a non-zero exit; binary, extracted assets, cache, and skill were then removed | PASS |
+| Homebrew Formula | Release `mss.rb` matched the template for the published source SHA256 `0f5a2b2b624d93d3efced289a9b0a2892af97eeaf579badc40703175040c8a78`; `brew audit --strict --online` clean; `brew install --build-from-source --skip-link` built the real asset; `brew test --force` passed | PASS |
+| Tap publication | [`henryyu333/homebrew-tap` `b2fe6b8`](https://github.com/henryyu333/homebrew-tap/commit/b2fe6b8bbd70a357bf513762a0b445934a730d44) publishes the release-generated `mss.rb` verbatim; the tap tree carries `Formula/` and `README.md` only. After `brew update`, `brew info henryyu333/tap/mss` reports stable 0.3.0 | PASS |
+| Installation safety | The machine's existing v0.2.0 Cask binary, symlink target, and Caskroom were byte-identical before and after every lifecycle check; no Cask was uninstalled or relinked | PASS |
+
+Remaining, unchanged: signing/notarization, TUI and external-human acceptance,
+non-native Homebrew hosts, and real-history retrieval quality.
+
 ## Fixed during this remediation
 
 1. **P0** — `hide: true` did not suppress automatic selection in Pi/Codex; the
@@ -107,7 +125,7 @@ skipped.
 | --- | --- | --- |
 | GoReleaser packaging | **Closed:** v0.3.0-rc.1 was packaged on CI, validated on three native runners, and published; the final tag runs the same workflow | — |
 | Homebrew native coverage and cutover | macOS arm64 source lifecycle passed (stable, candidate, and RC); Linux Homebrew, Intel macOS, and the actual Cask uninstall/link were not exercised because the existing installation was deliberately preserved | Native hosts and a separately approved real cutover |
-| Published v0.3.0 Formula | The RC Formula was audited, installed from the real asset, and tested; the tap still carries the v0.2.0 Formula until the post-release update | Final Release asset, then the tap update |
+| Published v0.3.0 Formula | **Closed:** the release-generated Formula was audited, installed from the real asset, tested, and published to the tap (`b2fe6b8`) | — |
 | Signing / notarization | No certificate or signing pipeline configured | Maintainer; until then checksums are integrity-only |
 | Interactive host invocation | Headless real-model invocations passed for Pi, OMP, and Codex (explicit skill-file path); Claude Code is PENDING (no credentials in this context); TUI sessions were not driven | First-user checklist, one human per host |
 | External user acceptance | No external user has run this build | [first-user checklist](first-user-checklist.md) |

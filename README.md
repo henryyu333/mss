@@ -11,11 +11,11 @@ IDs, dates, and verbatim quotes. It must distinguish matches, candidates, misses
 and incomplete coverage. It does not create curated memories or inject history
 into every conversation turn.
 
-**v0.3.0 is published** with the explicit `install-skill` command; a
-source-built Homebrew Formula follows the release into the tap. Archives are
-unsigned and not notarized, so macOS may require your security process before
-running a downloaded binary. Interactive-host acceptance by real external
-users is still pending. See [installation](docs/install.md) and
+**v0.3.0 is published** with the explicit `install-skill` command and a
+source-built Homebrew Formula in the tap. Archives are unsigned and not
+notarized, so macOS may require your security process before running a
+downloaded binary. Interactive-host acceptance by real external users is still
+pending. See [installation](docs/install.md) and
 [release evidence](docs/release-v0.3.0.md).
 
 ## A synthetic demo
@@ -76,9 +76,8 @@ controls.
 
 For pinned releases, optional `sqlite3`/`zstd`, PATH, update, rollback, and
 uninstall instructions, use [the installation guide](docs/install.md). Homebrew
-installs a source-built Formula (`brew install --formula henryyu333/tap/mss`);
-the v0.3.0 Formula reaches the tap right after this release, and historical
-v0.2.0 Cask users follow the staged migration in that guide.
+installs the source-built Formula: `brew install --formula henryyu333/tap/mss`;
+historical v0.2.0 Cask users follow the staged migration in that guide.
 
 ## Commands and result interpretation
 
