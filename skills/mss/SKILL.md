@@ -3,7 +3,7 @@ name: mss
 description: "Manually recall local coding-session history with session ids, dates and verbatim quotes."
 disable-model-invocation: true
 metadata:
-  mss-version: "0.3.0"
+  mss-version: "0.3.0-rc.1"
 ---
 
 # mss (manual recall of past sessions)

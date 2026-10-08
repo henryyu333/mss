@@ -3,7 +3,7 @@ name: mss
 description: "手动召回本机历史编程会话，附会话 id、日期和逐字引用。"
 disable-model-invocation: true
 metadata:
-  mss-version: "0.3.0"
+  mss-version: "0.3.0-rc.1"
 ---
 
 # mss（手动召回历史会话）
