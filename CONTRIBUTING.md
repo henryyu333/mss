@@ -44,8 +44,9 @@ go test ./...         # the full suite
 ```
 
 CI is configured to build, vet, test, and check formatting on macOS, Linux, and
-Windows. Configuration is not evidence of a green run: the candidate's remote
-three-OS CI and native Linux/Windows runtime gates remain pending.
+Windows. Configuration alone is not evidence: main `1db0ab6` passed
+[three-platform CI and native CLI smoke](https://github.com/henryyu333/mss/actions/runs/37793748699).
+That does not certify every architecture or external user's environment.
 
 Some tests enforce contracts between code and docs; [AGENTS.md](AGENTS.md)
 lists them. In short:

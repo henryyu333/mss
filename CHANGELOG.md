@@ -22,8 +22,9 @@ All notable changes to mss are recorded here. The format follows
 ### Changed
 
 - Releases generate a separately published, source-built Homebrew formula.
-  Cask publishing and automatic quarantine removal are removed; migration of
-  the external tap and its validation remain separate release gates.
+  The external tap migrates the published v0.2.0 Cask to a source Formula;
+  existing users build/test the unlinked replacement before removing the Cask.
+  No automatic quarantine removal or agent-Skill installation is performed.
 
 ### Fixed
 
@@ -45,6 +46,8 @@ All notable changes to mss are recorded here. The format follows
   failed-file diagnostics with a corrupt SQLite store on all CI platforms.
   Permission-based read failures skip Windows and root, where chmod cannot
   enforce their premise.
+- Generated Homebrew Formulas derive their version from the release-source URL
+  instead of a redundant stanza that fails Homebrew's strict audit.
 
 ### Documentation
 

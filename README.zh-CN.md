@@ -6,7 +6,7 @@
 
 MSS 为本机已有、格式受支持的会话记录建立索引。你可以直接用 CLI 搜索，也可以明确要求 Agent 执行随附的 Skill。Skill 搜索并读取相关会话，再根据证据总结，附上会话 ID、日期和逐字引用。它必须区分命中、候选、未找到和覆盖不完整，不维护整理后的“记忆”，也不在每轮对话中注入历史。
 
-**v0.3.0 尚未发布，目前是候选版本。** 公开的最新版本仍是 v0.2.0，**没有** `install-skill` 命令。原生 Linux/Windows 运行验证、远程 CI、发布分发、外部 Homebrew 迁移和公证均不应视为已通过。详见[发布门槛](docs/release-v0.3.0.md)。
+**v0.3.0 尚未发布，目前是候选版本。** 公开的最新版本仍是 v0.2.0，**没有** `install-skill` 命令。main `1db0ab6` 的 Ubuntu/macOS/Windows 原生 CI 已全部通过；发布分发和公证仍是独立门槛。详见[发布证据](docs/release-v0.3.0.md)。
 
 ## 虚构数据演示
 
@@ -43,7 +43,7 @@ mss install-skill <claude|codex|pi|omp> [--language en|zh-CN]
 
 Codex 安装包含禁止隐式调用的 `agents/openai.yaml`；只复制 `SKILL.md` 不算完整安装。安装后重启宿主。Claude 使用 `/mss <问题>`，Pi/OMP 使用 `/skill:mss <问题>`，Codex 使用 Skill 选择器。已观察的 Codex 探测中，非 TUI 的普通 `$mss` 消息没有展开 Skill。四个宿主的交互调用都尚未验证。详见[宿主证据与手动控制](docs/skill-compatibility.md)，其中也说明了无法可靠控制调用时，如何明确要求读取指定 Skill 文件。
 
-未来固定版本的安装、可选 `sqlite3`/`zstd`、PATH、更新、回滚和卸载步骤见[安装指南](docs/install.md)。Homebrew formula 迁移尚未完成，不要假定候选 formula 已发布；这不意味着 Linux 不能使用 binary cask。
+未来固定版本的安装、可选 `sqlite3`/`zstd`、PATH、更新、回滚和卸载步骤见[安装指南](docs/install.md)。Homebrew 迁移使用源码构建的 v0.2.0 Formula；v0.3.0 Formula 仍依赖正式发布的源码资产，已验证范围见发布证据。
 
 ## 命令与结果判断
 
@@ -85,7 +85,7 @@ JSON schema 版本 2 见 [JSON 输出](docs/json-output.md)。`exact`、`close`�
 
 - **本地、明确调用的 CLI。** 没有网络、遥测、后台进程、文件监听、自动记忆写入、hooks 或 MCP 服务；可能调用本机的 `sqlite3`、`zstd` 和 `git`。Agent 和模型的行为属于另一道边界。
 - **源会话只读。** 索引和搜索写 MSS 缓存，不改写源记录。明确调用的 `install-skill` 是例外，只写入所选工作流资源，不修改 Agent 设置或其他指引。
-- **缓存不加密。** `~/.cache/mss/index.db` 是索引**目录**，不是 SQLite 文件。`MSS_INDEX_DIR` 必须是绝对目录路径，旁边的锁路径加 `.lock`。Unix 使用目录 `0700`、文件 `0600`；Windows 依靠 ACL 和用户目录继承权限，不能用这些 Unix 模式保证保护。原生 Windows/Linux 验证仍待完成。
+- **缓存不加密。** `~/.cache/mss/index.db` 是索引**目录**，不是 SQLite 文件。`MSS_INDEX_DIR` 必须是绝对目录路径，旁边的锁路径加 `.lock`。Unix 使用目录 `0700`、文件 `0600`；Windows 依靠 ACL 和用户目录继承权限，不能用这些 Unix 模式保证保护。CI 已通过，真实用户环境的 Windows ACL 验证仍待完成。
 - **缓存可能比原始记录保留更久。** 当 Harness 删除记录、但数据源目录仍在时，MSS 保留已入库的历史，并提示仍可检索。索引可能是仅存的脱敏副本。清理前保留审核过的备份；新索引无法从已经消失的原文件恢复历史。
 - **模式脱敏不保证没有秘密。** 入库时替换可识别的密钥、token 和密码；非常规秘密、私人代码、姓名及其他敏感文本可能保留。`MSS_NO_REDACT=1` 在完整重建时关闭脱敏；取消该变量后重建，才能替换未脱敏缓存。
 - **Agent 可能把召回内容发出本机。** Agent 读取 CLI 输出后，历史进入当前对话，可能发送给它使用的模型服务。MSS 自身不联网，不等于云端 Agent 的召回全程本地。

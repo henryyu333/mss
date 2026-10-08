@@ -12,9 +12,9 @@ and incomplete coverage. It does not create curated memories or inject history
 into every conversation turn.
 
 **v0.3.0 is an unpublished candidate.** The existing public latest release is
-v0.2.0 and does **not** include `install-skill`. Native Linux/Windows runtime CI,
-release distribution, external Homebrew migration, and notarization are not
-claimed as passed. See [release gates](docs/release-v0.3.0.md).
+v0.2.0 and does **not** include `install-skill`. main `1db0ab6` passed native
+Ubuntu/macOS/Windows CI; release distribution and notarization remain separate
+gates. See [release evidence](docs/release-v0.3.0.md).
 
 ## A synthetic demo
 
@@ -67,8 +67,8 @@ explicit file-read alternative for hosts without reliable invocation controls.
 
 For future pinned releases, optional `sqlite3`/`zstd`, PATH, update, rollback,
 and uninstall instructions, use [the installation guide](docs/install.md).
-Homebrew formula migration is pending: do not assume the candidate formula is
-published. This is not a claim that Linux cannot use binary casks.
+Homebrew migration uses a source-built v0.2.0 Formula; the v0.3.0 Formula still
+requires its published source asset. See the release evidence for tested limits.
 
 ## Commands and result interpretation
 
@@ -131,7 +131,7 @@ reduce coverage, not necessarily CLI availability.
   not a SQLite file. `MSS_INDEX_DIR` must be an absolute directory path; its
   sibling lock adds `.lock`. Unix protections use directory `0700` and file
   `0600`; Windows protection depends on ACLs/inherited profile permissions, not
-  those Unix modes. Native Windows/Linux validation is pending.
+  those Unix modes. CI passed; real-user Windows ACL validation remains pending.
 - **Cached history can outlive transcripts.** If a harness removes a transcript
   while its store remains, MSS retains the indexed snapshot and reports it as
   still searchable. The index may be its only surviving redacted copy. Keep a

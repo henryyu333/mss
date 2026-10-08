@@ -2,9 +2,9 @@
 
 **v0.3.0 is an unpublished candidate.** The v0.3.0 release downloads, source
 archive, and pinned Go-install command below become usable only after the tag and
-release are published. This guide does not claim that CI, native Windows/Linux
-validation, signing, notarization, or the external Homebrew migration has already
-passed. For candidate testing, build the reviewed candidate checkout locally.
+release are published. main `1db0ab6` passed three-platform CI and native CLI
+smoke; release packaging, signing/notarization, and real-user acceptance are
+separate gates. For candidate testing, build the reviewed checkout locally.
 
 ## Choose a binary installation method
 
@@ -80,40 +80,63 @@ go build -trimpath -ldflags "-X main.version=0.3.0" -o ./mss ./cmd/mss
 On Windows use `-o .\mss.exe` and invoke `.\mss.exe`. A stamped local build is
 still a local candidate, not proof that an official release exists.
 
-### Homebrew: migration pending, not a v0.3.0 installation route yet
+### Homebrew: source Formula migration
 
-The existing external `henryyu333/homebrew-tap` is a separate repository. Its
-migration/publication is **pending and requires separate authorization**; this
-repository's release workflow cannot update it. The v0.2.0 cask includes macOS
-and Linux URLs. Current [Homebrew documentation](https://docs.brew.sh/Cask-Cookbook#at-least-one-artifact-stanza-is-also-required)
-allows a cross-platform `binary` cask; actual Linux installation was not exercised
-here. The reason for switching to a source formula is the quarantine bypass and
-unsigned macOS distribution, not a blanket claim that Linux cannot use casks.
+The external [henryyu333/homebrew-tap](https://github.com/henryyu333/homebrew-tap)
+migration uses a source-built **v0.2.0** Formula first, because that release's
+source already exists. It does not make v0.3.0 available or add `install-skill`
+to v0.2.0. Consult the tap README and [release evidence](release-v0.3.0.md) for
+publication and tested-environment status.
 
-The candidate removes GoReleaser's cask publishing and automatic quarantine
-removal. It also does not switch to the deprecated `brews` schema:
-[GoReleaser deprecated formula generation in v2.10](https://goreleaser.com/customization/publish/homebrew_formulas/).
-Instead, release packaging generates `mss.rb` as a standalone **source-built
-formula** following the [Homebrew Formula Cookbook](https://docs.brew.sh/Formula-Cookbook).
-It uses the SHA256 of `mss_0.3.0_source.tar.gz`, created with `git archive` from the
-exact release tag's commit, builds the CLI with Go, and carries both skills and
-the Codex policy. It has no cask/quarantine hooks, OS restriction, or automatic
-agent installation. `sqlite3` and `zstd` remain optional runtime tools.
+The old v0.2.0 binary Cask's quarantine-removing hook is removed, not retained
+as a migration mechanism. No Gatekeeper bypass, recursive `xattr`, `--no-quarantine`,
+`--force`, `--overwrite`, or automatic agent installation is needed.
+`sqlite3` and `zstd` remain optional runtime tools.
 
-Once the source release exists, a maintainer must separately review, build/test
-on supported macOS and Linux hosts, and publish `Formula/mss.rb` in the tap,
-removing/migrating the old cask there. Only **after that migration** is the
-following a supported tap command:
+After the Formula is published, a fresh installation uses:
 
 ```sh
 brew install --formula henryyu333/tap/mss
+mss version
 ```
 
-An existing cask installation should be explicitly removed with
-`brew uninstall --cask henryyu333/tap/mss` before installing the new formula,
-**but do not remove it until a replacement installation is available**. Neither
-that migration nor Homebrew formula build/audit/test results are asserted here.
-Use release archives or pinned Go source in the meantime.
+For an **existing Cask**, keep it working until the replacement has built and
+passed tests. Close running MSS invocations and record `command -v mss` and its
+version. Retain a reviewed copy of the old binary outside PATH for rollback.
+Do not uninstall it merely to discover whether the replacement builds.
+
+```sh
+brew update
+brew install --formula --build-from-source --skip-link henryyu333/tap/mss
+brew test --force henryyu333/tap/mss
+"$(brew --prefix henryyu333/tap/mss)/bin/mss" version
+```
+
+Here `brew test --force` means **test the unlinked Formula**, not ignore a
+failed test. If any build, test or version check fails, stop and retain the Cask.
+Only after successful checks, deliberately complete the package cutover:
+
+```sh
+brew uninstall --cask henryyu333/tap/mss
+brew link henryyu333/tap/mss
+command -v mss
+mss version
+```
+
+Do not use `--zap` or force a conflicting link. If linking fails, the tested
+Formula binary remains callable by the full path above; inspect the conflict
+before changing files. Uninstalling this Cask does not remove MSS caches,
+configuration, installed Skills, or source sessions. A retained old binary can
+be invoked directly during rollback; do not reinstall the old bypassing Cask.
+
+For v0.3.0, release packaging generates a standalone source Formula rather than
+using [GoReleaser's deprecated formula publisher](https://goreleaser.com/customization/publish/homebrew_formulas/).
+Its URL and SHA256 point to `mss_0.3.0_source.tar.gz`, produced by `git archive`
+from the exact release tag. After publication and native validation, a
+maintainer separately replaces the tap Formula with the verified `mss.rb`
+artifact. The release workflow never pushes the tap. Both Skill languages and
+Codex policy are packaged, but installing/upgrading the Formula never installs
+or overwrites a user's Skill.
 
 ## Optional tools and store roots
 
@@ -263,7 +286,7 @@ restart the harness. Review each harness separately; do not delete its parent
 skills directory or change unrelated agent configuration.
 
 Remove the exact installed `mss`/`mss.exe` binary via Trash/Recycle Bin, or use
-`brew uninstall --formula henryyu333/tap/mss` for the future formula route.
+`brew uninstall --formula henryyu333/tap/mss` for the source Formula route.
 A historical cask uses `brew uninstall --cask henryyu333/tap/mss` instead.
 Go has no `go uninstall`; identify the installed file using `go env GOBIN GOPATH`
 and your shell's PATH lookup before moving it to Trash.
@@ -304,10 +327,11 @@ reinstallation). It executes binaries only in temporary isolated homes, never
 reads real session stores, and never installs third-party tools.
 
 Only after every CI and archive-validation job succeeds does a separate job
-publish those validated artifacts. This configuration is **not an observed green
-CI run**. Only the native architecture present on each runner is executed; other
-architectures are cross-built/header-checked, not native-runtime certified. Tap
-publication, Homebrew native formula audit/build/test, interactive harness
-acceptance, signing, and notarization remain independent validation/publication
-steps. No tap token is used and no Homebrew repository is modified by this
+publish those validated artifacts. The main `1db0ab6` CI is observed green;
+the tag-triggered packaging/archive/publication jobs have not been executed.
+Only the native architecture present on each runner is executed; other
+architectures are cross-built/header-checked, not native-runtime certified.
+Homebrew lifecycle evidence and remaining native validation, interactive host
+acceptance, signing, and notarization gates are recorded in the release document.
+No tap token is used and no Homebrew repository is modified by this
 workflow.

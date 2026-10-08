@@ -154,7 +154,6 @@ class Mss < Formula
   desc "Recall and summarize past AI coding sessions, no memory system needed"
   homepage "https://github.com/henryyu333/mss"
   url "https://github.com/henryyu333/mss/releases/download/v{version}/{source_name(version)}"
-  version "{version}"
   sha256 "{source_hash}"
   license "MIT"
 

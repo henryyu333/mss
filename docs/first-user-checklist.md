@@ -8,9 +8,11 @@ do not send private sessions or credentials to a model provider or issue tracker
 
 Use [installation](install.md), [host evidence](skill-compatibility.md), and
 [synthetic benchmark methodology](benchmarks.md) as the reproducible references.
-v0.3.0 is an unpublished candidate; do not expect its release URLs or Homebrew
-formula to exist yet. Native Linux/Windows runtime CI, external tap migration,
-and interactive host acceptance remain separate pending gates.
+v0.3.0 is an unpublished candidate; do not expect its release URLs or Formula
+artifact to exist yet. main `1db0ab6` passed native Ubuntu/macOS/Windows CI
+([run 37793748699](https://github.com/henryyu333/mss/actions/runs/37793748699)).
+CI is technical evidence, not external-human acceptance. Homebrew distribution
+evidence and remaining gates are recorded in [release gates](release-v0.3.0.md).
 
 ## Record the environment before starting
 
@@ -18,6 +20,12 @@ and interactive host acceptance remain separate pending gates.
   commit or release checksum, and `mss version` output. Record the resolved binary
   path (`command -v mss` or `Get-Command mss`), installation method, and any duplicate
   PATH copies. A locally stamped `0.3.0` is not proof of an official release.
+- [ ] For Homebrew, record whether MSS is a Formula or historical Cask, and
+  invoke the installed Formula by full path when checking it; an older user-local
+  `mss` can precede Homebrew on PATH. Follow the staged migration in
+  [installation](install.md#homebrew-source-formula-migration), without retiring
+  the Cask before the replacement's build/test succeeds. Stable v0.2.0 lacks
+  `install-skill`; it is not a v0.3.0 host-acceptance build.
 - [ ] Record the agent's exact version, selected Skill language, actual Skill
   installation directory, and any custom profile/root. Confirm installed assets
   match that binary; Codex requires both `SKILL.md` and `agents/openai.yaml`.
