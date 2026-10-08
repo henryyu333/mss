@@ -153,9 +153,11 @@ func TestTheStrictHeadIsCountedAndNamedUnderTheRelevanceLabel(t *testing.T) {
 
 // A quoted phrase that matches nothing is retried without its quotes, and the
 // retry is published under the relevance label so the loosening is visible.
-// The words can all be there — only the phrase was not — and then the label
-// says nothing matched about an answer that did (#3815).
-func TestAQuotedQueryRetriedWithoutItsQuotesSaysWhatMatched(t *testing.T) {
+// The words can all be there — only the phrase was not — but dropping the
+// quotes changed the query, so the relaxed matches are candidates, never the
+// strict set: at a 2,000-session scale the old "every retry match is strict"
+// rule presented hundreds of relevance neighbours as verified evidence.
+func TestAQuotedQueryRetriedWithoutItsQuotesStaysCandidates(t *testing.T) {
 	dir := seedStore(t, 3)
 
 	r, err := SearchWithRecoveryDetailed(dir, query.Options{Query: `courier bikes "downtown routes"`, All: true}, nil)
@@ -168,12 +170,12 @@ func TestAQuotedQueryRetriedWithoutItsQuotesSaysWhatMatched(t *testing.T) {
 	if len(r.Sessions) == 0 {
 		t.Fatal("the retry found nothing, so there is nothing to label")
 	}
-	if r.Strict != len(r.Sessions) {
-		t.Fatalf("strict = %d over %d sessions, want every one of them", r.Strict, len(r.Sessions))
+	if r.Strict != 0 || len(r.StrictIDs) != 0 {
+		t.Fatalf("strict = %d over %d sessions; a quote-dropping retry must not claim strict matches", r.Strict, len(r.Sessions))
 	}
 	for _, s := range r.Sessions {
-		if !r.IsStrict(s) {
-			t.Fatalf("%q matched the loosened query but is not named as a match", s.ID)
+		if r.IsStrict(s) {
+			t.Fatalf("%q matched only the loosened query but is named as a strict match", s.ID)
 		}
 	}
 }
