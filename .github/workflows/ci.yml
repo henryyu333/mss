@@ -56,5 +56,9 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.x"
-      - name: Release validator regression tests
-        run: python -m unittest discover -s tools -p "test_verify_release.py"
+      - name: Release and benchmark consumer regression tests
+        run: python -m unittest discover -s tools -p "test_*.py"
+      - name: Native synthetic CLI smoke
+        run: |
+          go build -o mss-smoke.exe ./cmd/mss
+          python tools/benchmark.py --binary mss-smoke.exe --sessions 64 --queries 13 --output benchmark-smoke.json

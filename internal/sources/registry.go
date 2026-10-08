@@ -118,12 +118,6 @@ func resumesUnlessAnswering(hint string, answers func(m map[string]any) (calls [
 
 func hasBase(p, base string) bool { return filepath.Base(p) == base }
 
-// underRoot is the plain claim a single-root harness makes: this path is inside
-// my store and has my extension.
-func underRoot(p, root, ext string) bool {
-	return root != "" && strings.HasPrefix(p, root) && strings.HasSuffix(p, ext)
-}
-
 // Registry returns the harnesses mss reads, in load order. Flattening the
 // kinds preserves the original path-match precedence (matches are on disjoint
 // roots/basenames, so order only needs to stay deterministic).

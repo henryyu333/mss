@@ -10,6 +10,18 @@ output, not specifications published by the harness vendors.
 shaped like upstream records. `internal/sources/registry_test.go` checks the
 index against `mss`'s loader list and runs each fixture through its parser.
 
+The eight entries describe **parser families**, not eight verified Skill hosts.
+Skill installation and manual invocation have a separate
+[compatibility record](../skill-compatibility.md) for Claude, Codex, Pi, and OMP.
+No entry grants MSS MCP, automatic recall, resume, or handoff capabilities.
+
+`last_verified` is the historical date of the format observation documented on
+the corresponding reference page. Running synthetic conformance tests on
+2026-10-08 does not refresh that date or prove a current device was inspected.
+The dates remain unchanged unless a new actual format observation is recorded.
+The registry retains schema version 1, discovery paths, format kinds, fixture
+paths, parser source paths, display names, and observation dates.
+
 ## Entries
 
 | Harness | Format |
@@ -26,9 +38,11 @@ index against `mss`'s loader list and runs each fixture through its parser.
 ## Reporting drift
 
 Open an issue with the harness name and version, operating system, observed
-store path, and the smallest redacted record that shows the difference. State
-whether the change affects discovery, session metadata, roles, content, or
-timestamps. Do not attach a real session database or unredacted transcript.
+store path (with private components removed), and a minimal synthetic record
+that reproduces the difference. State whether the change affects discovery,
+session metadata, roles, content, or timestamps. Do not attach real private
+transcripts, credentials, or a session database; redaction alone does not
+guarantee a private record is safe to publish.
 
 ## Adding or updating a format
 

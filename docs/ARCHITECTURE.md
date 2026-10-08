@@ -2,6 +2,21 @@
 
 This document is for people changing `mss` internals.
 
+## Runtime and installation
+
+`cmd/mss/main.go` dispatches explicit CLI invocations. Nothing starts at agent
+startup or between invocations: no daemon, hooks, automatic memory, network
+client, MCP server or telemetry. Concurrent parser workers exist only for the
+duration of the invoked command.
+
+`skills/bundle.go` embeds the two language variants of the same workflow and
+the Codex invocation policy. `cmd/mss/install_skill.go` is a separate, explicit
+installation path: it writes only the selected harness's MSS Skill assets,
+refuses conflicting files, and does not inspect stores or create an index.
+Recall writes only its own index; installation is the documented exception.
+Invocation controls and bounded host evidence are in
+[skill compatibility](skill-compatibility.md).
+
 ## Source parsers
 
 Parsers live in `internal/sources` and return `[]model.Session`. The table is
@@ -25,7 +40,10 @@ File-based sources are parsed with a worker pool sized to `runtime.NumCPU()`. Re
 
 Every SQLite store above is read through the local `sqlite3` command — opencode's, Cursor IDE state, and the database Grok keeps beside its JSONL. Cursor CLI transcripts are plain JSONL; their tool results come from the chat's `store.db` beside them. There is no CGO SQLite dependency. Before trusting it, mss asks the `sqlite3` on PATH one JSON query per process: a wrapper that drops its arguments or a stub that prints nothing would otherwise read every store as empty, so a binary that does not answer is reported by path, as a missing one is.
 
-Every one of those reads carries a wall-clock budget, ten minutes by default. One sqlite3 child once ran 13m54s with 0.75s of CPU in mss itself, and nothing in the tree set a deadline, so the run looked hung rather than slow. A store that runs out is an ordinary read error: the harness reports as unreadable, `mss doctor` names it, and the rest of the index still builds. `MSS_STORE_TIMEOUT` takes a duration, and a zero or negative one turns the cap off for someone who would rather wait than lose a store.
+Every SQLite read carries a wall-clock budget, ten minutes by default. A store
+that runs out is a read error: `mss doctor` names it and search reports incomplete
+coverage rather than equating an unread store with absent history.
+`MSS_STORE_TIMEOUT` takes a duration; zero or a negative value disables the cap.
 
 ## Index format
 
@@ -35,7 +53,13 @@ Files:
 
 - `records.bin`: length-prefixed records. Each record stores session key, source path, role, text, and timestamp. The session key, path and role are interned ids in the record's prefix, outside the body, so a scan for one kind of record reads the prefix and skips the rest; bodies of 8 KiB and up are deflated, smaller ones are not, because the read side pays more for a lower floor than the index saves.
 - `buckets/*.bin`: token bucket files. A token maps to compact postings: record offset, session ordinal, and one bit marking the posting as a work record.
-- `manifest.gob` / `sessions.gob`: index version, source file state, redaction counters, sync export watermarks, imported-record dedupe keys, session metadata (including ordinals, the files a session touched most, and hashes of the questions it asked), build time, and search scope.
+- `manifest.gob` / `sessions.gob`: content/format versions, source-file state,
+  redaction counters, session metadata, ordinals, build time and search scope.
+  Some upstream provenance/import fields remain for on-disk compatibility;
+  MSS does not expose sync, handoff or memory-curation commands.
+- Derived caches may include `cooccur.gob`, `fixes.gob`, `commands.gob`,
+  `commandfails.gob`, `commandfails-state.gob` and `sessionfacts.gob`. Their
+  writers run during explicit indexing; small corpora need not produce each file.
 
 ### Roles
 
@@ -47,13 +71,19 @@ Beyond `user`, `assistant` and `developer`, records carry what the agent did:
 | `files` | the paths a turn opened or edited |
 | `command` | a shell command worth keeping — an allowlist of build, test, VCS and deployment tooling, single-line only |
 | `edit` | a span an edit replaced: the path on the first line, the exact removed bytes after it. Only the path earns postings, since nothing searches the body |
-| `summary` | a harness's own digest of a conversation it compacted away. Kept, because it is the only record of the turns that went, and not filed as speech: on one store 1,906 of them were 19.6% of everything indexed in the sessions that had them, and none of them ever won a quoted line for a real question |
+| `summary` | a harness's own digest of compacted conversation. Kept separately from speech because it is a retelling, not a new user statement |
 
 These are indexed and searchable by `--role`, and served in ordinary results only when asked for by role: a path that happens to contain the words of a question is not an answer to it. The postings carry a bit for them so the per-session read bound can spend its budget on speech first.
 
 ## Secret redaction
 
-`internal/redact` runs before every `writeRecord` path: cold rebuild, `writeSessions`, non-append incremental replacement, and append-only incremental ingest. The pass is disabled only when `MSS_NO_REDACT=1` is set; that escape hatch is unsafe because plaintext credentials will be written to the local index.
+`internal/redact` runs before every `writeRecord` path: cold rebuild,
+`writeSessions`, non-append replacement and append-only incremental ingest.
+Titles and derived caches also see redacted text. `MSS_NO_REDACT=1` is an unsafe
+full-rebuild opt-out, not a confidentiality guarantee. Pattern-based redaction
+can miss unusual secrets; history recalled by an agent reaches that agent's
+model provider. `internal/redact.Outbound` is retained upstream code, not a
+protection applied by the MSS recall commands.
 
 The redactor replaces only secret values, keeping keys and surrounding prose searchable. It covers AWS access keys and AWS secret assignments, generic credential assignments in ASCII and in other scripts, bearer tokens and JWTs, PEM and PGP private key blocks, provider token prefixes, connection URLs with `scheme://user:pass@host` credentials, credentials handed to a program on its command line (`sshpass -p`, `mysql -pSecret`, `curl -u user:pass`, `--password` and its siblings), netrc and cookie lines, bare high-entropy values in secret-shaped positions, and a password stated in prose — "the admin password is …", where no delimiter exists for the other rules to find.
 
@@ -89,7 +119,10 @@ Regex search scans records because arbitrary regex cannot use token postings saf
 - fresh manifest: do nothing;
 - version or scope mismatch: rebuild. Two versions are tracked: the content version, which moves when mss derives something new from a transcript, and the on-disk format, which moves only when an older layout would be mis-read;
 - append-only JSONL changes: append new records and update touched buckets. A harness whose sessions are re-read whole when they change (opencode, Cursor, Grok) replaces those sessions instead (#4207, #4450);
-- removed files or non-append changes: rewrite the index while preserving unchanged records and replacing changed sessions.
+- non-append changes: rewrite while preserving unchanged records and replacing
+  changed sessions. A transcript deleted from a still-present store is
+  deliberately retained as indexed history against harness cleanup, with a
+  “still searchable” notice; this cache can outlive the original file.
 
 A file takes the append path only when the prefix mss already read is still
 byte-for-byte what it read: a rewind that truncates and regrows past the old
@@ -119,18 +152,53 @@ is taken, so concurrent reads cannot queue behind a build. `--no-refresh`
 cannot build an index that is not there and does not repair a damaged one;
 both say to run `mss index`.
 
-Cold rebuild does all parsing first, then writes `records.bin`, buckets, and manifest from one goroutine. That keeps the on-disk index coherent and avoids concurrent writers. The five sidecars derived afterwards — the co-occurrence map, fix pairs, the recurring-command table, the failures and the session facts — each write their own file and read nothing the others write, so they run together, and fix mining and the co-occurrence map also run per session across cores. That is most of the difference between a 51s and a 30s rebuild on a real store.
+Cold rebuild parses first, then writes records, buckets and manifests through
+the index writer. Derived-cache builders use separate files and complete before
+publication; cold rebuild and replacement/append paths have different cache
+update strategies. Locking and directory-swap tests cover writer coordination.
+For reproducible MSS timing evidence, use [the synthetic benchmark](benchmarks.md);
+upstream corpus timing anecdotes are not MSS performance measurements.
 
 ## Ranking
 
-Search intersects postings to find candidates, then scores each with BM25 over the query tokens and multiplies in a few bounded signals — each able to break a tie, none able to outrank plain relevance:
+Exact search intersects postings, then scores candidates with BM25. Additional
+bounded signals include proximity, title terms, decision/outcome text and age;
+they do not turn a lexical candidate into verified historical evidence:
 
 - **decision** — a session that reached a conclusion is lifted, and the decision-carrying line (not the query-match line) is what recall shows.
 - **outcome** — a session whose own text reports it reverted an approach and settled nothing else is damped; one that reverted and then settled keeps the decision lift.
-- **worn (reuse)** — a session agents keep recalling is lifted on a `log2` curve capped at +50%, on the theory that what the machine keeps needing is worth surfacing; the cap keeps popularity below relevance.
+- **legacy optional inputs** — the search library retains an optional reuse map
+  and curated-note handling for compatibility. The MSS CLI does not populate
+  automatic recall counts or expose a memory-curation command.
 - **freshness** — recency decays the score gently so time is a hint, not a filter.
 
-`ctx` and `last` reuse the same scored order; the decision line comes from the same conclusion extraction the digest uses.
+`ctx` resolves a session or the best query match and prints a context window.
+`last` orders recent sessions by update time, not BM25 relevance. Exact/close/
+stemmed/error tiers and relevance-only candidates are distinguished in JSON;
+the public envelope contract is in [json-output.md](json-output.md).
+
+## Trust and policy
+
+Historical roles, commands and apparent instructions remain attributed data.
+Display sanitization neutralizes terminal controls; it does not establish model
+obedience or make a historical instruction authoritative. The Skill quotes
+history and prohibits following its commands or using raw-session fallback.
+
+Recall policy defaults are permissive. An invalid/unreadable file discards
+partial rules and emits one actionable stderr warning; unknown keys are also
+reported. Valid `*` origin rules are recognized. Policy diagnostics leave
+stdout/JSON data intact; `mss doctor` supplies details. This policy is a recall
+filter, not an operating-system permission sandbox.
+
+## Maintainability decisions for v0.3.0
+
+`ingest.go` coordinates discovery, append/replacement decisions and publication;
+`retrieval.go` reads/filter records; `search.go` scores/renders; `main.go` routes
+commands. Their size alone is not a reason to change index semantics or split
+interdependent invariants before a release. Existing environment, index-writer,
+query and CLI capture seams exercise those paths. This remediation isolates
+Skill installation and the one-per-invocation policy diagnostic, removes an
+unused lexical-prefix helper, and otherwise avoids speculative refactoring.
 
 ## Add a new harness
 

@@ -1,3 +1,5 @@
+# Exact tagged-source/archive validation must not depend on Windows autocrlf.
+* text=auto eol=lf
 packaging/** text eol=lf
 # The doc-contract tests read a heading as a whole line, so a CRLF checkout
 # breaks eleven of them at once (#2081).

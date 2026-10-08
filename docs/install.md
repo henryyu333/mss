@@ -277,6 +277,11 @@ before removal: it may contain your policy or exclusions. Do not remove any
 Claude/Codex/Cursor/Grok/Pi/OMP/DeepSeek source-session directory. No wide
 recursive delete command is needed.
 
+Do not assume every cached transcript still exists in its harness. MSS retains
+indexed history when a harness deletes a file from a still-present store, and
+that cache may be the only surviving redacted copy. Preserve a reviewed backup
+before removal; a fresh index cannot recover source files that no longer exist.
+
 ## Maintainer release gate
 
 The tag workflow invokes the reusable CI workflow on **that tag's commit**:

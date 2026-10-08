@@ -17,16 +17,7 @@
       ],
       "parser_source": "internal/sources/claude.go",
       "last_verified": "2026-09-10",
-      "display_name": "Claude Code",
-      "capabilities": {
-        "mcp": true,
-        "auto": true,
-        "skill": true,
-        "command": true,
-        "resume": true,
-        "handoff": "exec",
-        "prereq": ""
-      }
+      "display_name": "Claude Code"
     },
     {
       "id": "codex",
@@ -47,16 +38,7 @@
       ],
       "parser_source": "internal/sources/codex.go",
       "last_verified": "2026-09-10",
-      "display_name": "Codex CLI",
-      "capabilities": {
-        "mcp": true,
-        "auto": true,
-        "skill": true,
-        "command": true,
-        "resume": true,
-        "handoff": "exec",
-        "prereq": ""
-      }
+      "display_name": "Codex CLI"
     },
     {
       "id": "cursor",
@@ -76,17 +58,7 @@
       ],
       "parser_source": "internal/sources/cursor.go",
       "last_verified": "2026-10-01",
-      "display_name": "Cursor",
-      "capabilities": {
-        "mcp": true,
-        "auto": true,
-        "skill": true,
-        "command": true,
-        "resume": true,
-        "handoff": "exec",
-        "prereq": "sqlite3 (IDE chats, CLI tool output)"
-      },
-      "gaps": {}
+      "display_name": "Cursor"
     },
     {
       "id": "deepseek",
@@ -103,23 +75,7 @@
       ],
       "parser_source": "internal/sources/deepseek.go",
       "last_verified": "2026-10-02",
-      "display_name": "DeepSeek Harness",
-      "capabilities": {
-        "mcp": true,
-        "auto": true,
-        "skill": true,
-        "command": true,
-        "resume": false,
-        "handoff": "paste",
-        "prereq": "zstd"
-      },
-      "gaps": {
-        "resume": {
-          "state": "impossible",
-          "why": "dsh ships two apps, headless and web; neither takes a session id. The launcher documents a tui profile that this release has no bundle for, and reopening a conversation is something the web UI sidebar does, not a command mss can print",
-          "source": "no resume flag in dsh 0.1.1-rc.2 headless or web"
-        }
-      }
+      "display_name": "DeepSeek Harness"
     },
     {
       "id": "grok",
@@ -134,17 +90,7 @@
       ],
       "parser_source": "internal/sources/grok.go",
       "last_verified": "2026-08-24",
-      "display_name": "Grok Build",
-      "capabilities": {
-        "mcp": true,
-        "auto": true,
-        "skill": true,
-        "command": true,
-        "resume": true,
-        "handoff": "exec",
-        "prereq": "sqlite3 (grok-dev store)"
-      },
-      "gaps": {}
+      "display_name": "Grok Build"
     },
     {
       "id": "omp",
@@ -160,17 +106,7 @@
       ],
       "parser_source": "internal/sources/omp.go",
       "last_verified": "2026-09-06",
-      "display_name": "omp (Oh My Pi)",
-      "capabilities": {
-        "mcp": true,
-        "auto": true,
-        "skill": true,
-        "command": true,
-        "resume": true,
-        "handoff": "exec",
-        "prereq": ""
-      },
-      "gaps": {}
+      "display_name": "omp (Oh My Pi)"
     },
     {
       "id": "opencode",
@@ -188,16 +124,7 @@
       ],
       "parser_source": "internal/sources/opencode.go",
       "last_verified": "2026-09-30",
-      "display_name": "opencode",
-      "capabilities": {
-        "mcp": true,
-        "auto": true,
-        "skill": true,
-        "command": true,
-        "resume": true,
-        "handoff": "exec",
-        "prereq": "sqlite3"
-      }
+      "display_name": "opencode"
     },
     {
       "id": "pi",
@@ -210,16 +137,7 @@
       ],
       "parser_source": "internal/sources/pi.go",
       "last_verified": "2026-09-06",
-      "display_name": "pi",
-      "capabilities": {
-        "mcp": true,
-        "auto": true,
-        "skill": true,
-        "command": true,
-        "resume": true,
-        "handoff": "exec",
-        "prereq": ""
-      }
+      "display_name": "pi"
     }
   ]
 }

@@ -28,7 +28,8 @@ Your agent history can hold source code, credentials and private conversations.
   ```
 
 - Check screenshots, logs and `mss doctor` output for real paths, user names and
-  project names before you attach them anywhere.
+  project names before sharing. Public issue feedback must use synthetic
+  reproductions, not real private transcripts, databases, or credentials.
 
 ## Build and test
 
@@ -42,7 +43,9 @@ go vet ./...          # must be clean
 go test ./...         # the full suite
 ```
 
-CI runs the same checks on Linux and macOS for every pull request.
+CI is configured to build, vet, test, and check formatting on macOS, Linux, and
+Windows. Configuration is not evidence of a green run: the candidate's remote
+three-OS CI and native Linux/Windows runtime gates remain pending.
 
 Some tests enforce contracts between code and docs; [AGENTS.md](AGENTS.md)
 lists them. In short:
@@ -52,6 +55,26 @@ lists them. In short:
 - `docs/ARCHITECTURE.md` keeps one parser-table row per harness.
 - The JSON emitted by `search`, `show` and `last` must match
   `docs/json-output.md`.
+
+Optional verification tools do not become runtime dependencies:
+
+- Python's standard library runs `tools/test_verify_release.py` and the versioned
+  release validator described in [installation](docs/install.md#maintainer-release-gate).
+  Release checks must use the exact tag commit and its immutable artifact, not
+  a different branch build; checksums, archive contents, embedded Skill assets,
+  version output, and real host installation are separate gates.
+- The real-host offline Codex/Pi probes in
+  [Skill compatibility](docs/skill-compatibility.md) need the stated host
+  versions and Python/Node. They do not prove interactive model execution.
+- [Synthetic benchmarks](docs/benchmarks.md) document reproducible corpus,
+  search, miss, and citation checks. Record actual environment and measured
+  output; never substitute upstream numbers or infer real-history accuracy.
+- [First-user acceptance](docs/first-user-checklist.md) remains a genuine
+  external-human check, not a claim made by fixtures or offline probes.
+
+Missing optional tools and skipped tests must be reported as coverage gaps,
+not passed gates. Publishing a release or changing the external Homebrew tap
+requires separate maintainer authorization.
 
 ## Style
 
