@@ -6,6 +6,19 @@ All notable changes to mss are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Manual Skill routing uses `disable-model-invocation` for Claude Code, OMP and
+  Pi, plus a Codex-specific `allow_implicit_invocation: false` policy. The former
+  OMP-only `hide` field did not suppress Pi/Codex automatic selection.
+- Both Skill languages treat recalled instructions and commands as untrusted
+  evidence, avoid raw-session fallback, and provide a PowerShell nonce command.
+
+### Documentation
+
+- A version-bounded Skill compatibility matrix and real-host offline probes;
+  Codex non-TUI invocation and untested interactive surfaces are explicit limits.
+
 ## [0.2.0] - 2026-10-07
 
 ### Added
