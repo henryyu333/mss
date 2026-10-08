@@ -41,6 +41,10 @@ All notable changes to mss are recorded here. The format follows
   and `--session <id>` scopes the relevance ranking as it scopes exact search.
 - Prerelease tags (`vX.Y.Z-suffix`) are published as GitHub prereleases instead
   of full releases.
+- Half-read store tests retain POSIX permission-denial coverage and exercise
+  failed-file diagnostics with a corrupt SQLite store on all CI platforms.
+  Permission-based read failures skip Windows and root, where chmod cannot
+  enforce their premise.
 
 ### Documentation
 
