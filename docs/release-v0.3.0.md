@@ -54,6 +54,27 @@ performed or is implied.
 | External user acceptance | No external user has run this build | [first-user checklist](first-user-checklist.md) |
 | Real-history retrieval quality | Synthetic corpus is not real developer history | Optional real-corpus evaluation, separately scoped |
 
+## Review follow-ups recorded, not blocking
+
+Independent review found these after the fixes above. They are logged here as
+maintenance items and were deliberately left out of the v0.3.0 scope:
+
+1. `search --sessions` on narrowed co-occurrence candidates reports
+   `matched_indices` by original-query terms rather than the substituted AND;
+   navigation precision, not evidence correctness (`cmd/mss/main.go`).
+2. The `strict` count is computed before recall-policy filtering, so a withheld
+   strict session makes the count disagree with the served list
+   (`internal/index/retrieval.go`, `cmd/mss/main.go`).
+3. `mss install-skill` rejects a symlinked skill directory but follows symlinks
+   on intermediate parents; documented limitation, acceptable because it needs
+   write access to the destination anyway.
+4. `tools/verify-release.py` reports a missing archive member as a KeyError
+   traceback instead of a formatted `FAIL:` line (CI still fails correctly).
+5. `verify-release.py check_native` runs the artifact with the host environment
+   minus `MSS_*`; switching to the benchmark's PATH allowlist would be tighter.
+6. The publish job trusts the artifact store between validation and upload;
+   re-running `verify` in the publish job would close the gap cheaply.
+
 ## Promotion verdict
 
 The candidate is ready for **public code review and a tagged release candidate**

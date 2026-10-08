@@ -253,7 +253,7 @@ Reports (full invocations, gold sets, coverage and digests):
 [64](benchmark-results/macos-arm64-64.json),
 [2000](benchmark-results/macos-arm64-2000.json),
 [10000](benchmark-results/macos-arm64-10000.json).
-SHA-256: `ea267bb1…23b917`, `612a4b55…51670`, `695b1713…0e989`.
+SHA-256: `ea267bb1…3b917`, `612a4b55…51670`, `695b1713…0e989`.
 
 A report with `status: "FAIL"` is a failed consumer assertion or execution, not
 a number to discard or a reason to relabel the gold. Diagnose the actual failure,

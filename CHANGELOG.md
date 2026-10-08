@@ -39,6 +39,8 @@ All notable changes to mss are recorded here. The format follows
   answer: with a strict head the list serves only verified matches. Co-occurrence
   substitutions and quoted-phrase relaxations are now classified as `candidates`,
   and `--session <id>` scopes the relevance ranking as it scopes exact search.
+- Prerelease tags (`vX.Y.Z-suffix`) are published as GitHub prereleases instead
+  of full releases.
 
 ### Documentation
 
