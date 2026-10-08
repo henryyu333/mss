@@ -113,11 +113,8 @@ func loadFileSources() []model.Session {
 // they cannot find: they print, or they diagnose the very state the guard is
 // about, or they carry their own refusal.
 //
-// `version` and `help` write nothing at all and are what a packager runs;
-// `completion` is sourced from a shell rc file; `update` replaces the binary
-// and is how somebody gets out of a broken state; `doctor` and `sources` are
-// where every other message sends the reader to find out what mss can see;
-// and install carries #1690's own guard, whose advice is the right one for it.
+// `version` and `help` write nothing; `doctor` and `sources` diagnose the
+// missing home. Skill installation handles its own destination before this guard.
 var worksWithNoHome = map[string]bool{
 	"version": true, "--version": true, "-version": true,
 	"help": true, "--help": true, "-h": true,
@@ -186,12 +183,18 @@ var commands = map[string]command{
 		printSources(dir)
 		return nil
 	},
-	"doctor": func(dir string, rest []string) error { return runDoctor(os.Stdout, rest, dir) },
-	"index":  cmdIndex,
-	"ctx":    cmdCtx,
+	"doctor":        func(dir string, rest []string) error { return runDoctor(os.Stdout, rest, dir) },
+	"index":         cmdIndex,
+	"ctx":           cmdCtx,
+	"install-skill": cmdInstallSkill,
 }
 
 func run(args []string) error {
+	// Skill installation has no reason to inspect an index, store selection or
+	// recall policy. Its own guard resolves the one user-selected destination.
+	if len(args) > 0 && args[0] == "install-skill" {
+		return cmdInstallSkill("", args[1:])
+	}
 	dir := index.DefaultDir()
 	// Before anything reads or writes: every path mss writes hangs off the
 	// home directory, and it answers "" when there is none, so
@@ -225,6 +228,9 @@ func run(args []string) error {
 			fmt.Print(wrapUsage(h, printableWidth(os.Stdout)))
 			return nil
 		}
+	}
+	if _, registered := commands[args[0]]; !registered || args[0] == "ctx" {
+		warnPolicyDiagnostic(os.Stderr)
 	}
 	switch args[0] {
 	case "show":
@@ -2938,6 +2944,7 @@ Usage:
   mss sources
   mss doctor [--json] [--deep]
   mss index [--rebuild] [--quiet]
+  mss install-skill <claude|codex|pi|omp> [--language en|zh-CN]
   mss version
   mss <command> --help
 
@@ -2998,9 +3005,7 @@ func helpForCommand(name string) string {
 	if i := strings.Index(usage, "\nExamples:\n"); i >= 0 {
 		usage = usage[:i]
 	}
-	// A usage line can carry indented continuations under it — the install
-	// target list sits under the install/uninstall pair — so a match keeps
-	// collecting until the next "mss …" line that does not match.
+	// Indented continuations belong to the preceding command's usage line.
 	matched := false
 	for _, line := range strings.Split(usage, "\n") {
 		t := strings.TrimSpace(line)

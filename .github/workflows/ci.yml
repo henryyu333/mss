@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
@@ -13,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -23,9 +24,37 @@ jobs:
       - name: sqlite3 and zstd for the store tests
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y sqlite3 zstd
-      - name: zstd for the store tests
+      - name: sqlite3 and zstd for the store tests
         if: runner.os == 'macOS'
-        run: brew install zstd
-      - run: test -z "$(gofmt -l .)"
+        run: brew install sqlite zstd
+      - name: sqlite3 and zstd for the store tests
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install sqlite zstandard --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$env:ProgramData\chocolatey\bin\sqlite3.exe" --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$env:ProgramData\chocolatey\bin\zstd.exe" --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check gofmt (POSIX)
+        if: runner.os != 'Windows'
+        run: test -z "$(gofmt -l .)"
+      - name: Check gofmt (PowerShell)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $files = @(gofmt -l .)
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($files.Count -ne 0) {
+            $files | Write-Output
+            throw "Run gofmt on the files above"
+          }
+      - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - name: Release validator regression tests
+        run: python -m unittest discover -s tools -p "test_verify_release.py"

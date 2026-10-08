@@ -27,37 +27,12 @@ archives:
       - README.zh-CN.md
       - skills/mss/SKILL.md
       - skills/mss/SKILL.zh-CN.md
+      - skills/mss/agents/openai.yaml
+      - docs/install.md
 
 checksum:
   name_template: checksums.txt
 
-homebrew_casks:
-  - name: mss
-    binaries: [mss]
-    homepage: https://github.com/henryyu333/mss
-    # Homebrew wants a short desc (80 characters or fewer, no trailing period),
-    # so this is the repository description cut down to what fits.
-    description: "Recall and summarize past AI coding sessions, no memory system needed"
-    license: MIT
-    # Compressed Codex and DeepSeek transcripts are read through the zstd CLI.
-    dependencies:
-      - formula: zstd
-    repository:
-      owner: henryyu333
-      name: homebrew-tap
-      branch: main
-      # The workflow's own token cannot write to another repository. Until a
-      # tap token is stored as a secret the release still publishes, and the
-      # cask is pushed to the tap by hand.
-      token: '{{ index .Env "HOMEBREW_TAP_GITHUB_TOKEN" }}'
-    skip_upload: '{{ if eq (index .Env "HOMEBREW_TAP_GITHUB_TOKEN") "" }}true{{ end }}'
-    hooks:
-      post:
-        # The binary is not notarized; without this Gatekeeper refuses to run it.
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/mss"]
-          end
 
 changelog:
   sort: asc

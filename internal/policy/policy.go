@@ -58,13 +58,15 @@ func Path() string {
 	return filepath.Join(base, "mss", "policy.json")
 }
 
-// Load reads the policy file. Any read or parse
-// failure means the default policy — recall must not break because a config
-// file is malformed; doctor is the place to complain.
+// Load reads the policy file. Any read or parse failure discards the entire
+// file and uses the default policy: allow every origin, with the default ignore
+// patterns. Recall warns about invalid files; doctor explains how to fix them.
 func Load() Policy {
 	var p Policy
 	if b, err := os.ReadFile(Path()); err == nil {
-		_ = json.Unmarshal(b, &p)
+		if err := json.Unmarshal(b, &p); err != nil {
+			return Policy{}
+		}
 	}
 	return p
 }
@@ -179,9 +181,9 @@ func Filter[T any](p Policy, activation string, items []T, projectOf func(T) str
 // Diagnose reports what a reader needs to know about the policy file: whether
 // it exists, whether it parses, and which keys it uses that mean nothing.
 //
-// Load deliberately falls back to the permissive default on any error, so a
-// malformed file changes nothing and says nothing — the wrong outcome for the
-// one mechanism separating local memory from imported (#661).
+// Load deliberately falls back to the permissive default on any error.
+// Recall uses these diagnostics to warn without changing its output schema;
+// doctor reports the details.
 func Diagnose() (exists bool, unknown []string, err error) {
 	path := Path()
 	if path == "" {
@@ -223,7 +225,7 @@ func Diagnose() (exists bool, unknown []string, err error) {
 			continue
 		}
 		for origin := range rules {
-			if origin == "local" || origin == "imported" || strings.HasPrefix(origin, "imported:") {
+			if origin == "*" || consultedOrigin(origin) {
 				continue
 			}
 			unknown = append(unknown, activation+"."+origin)

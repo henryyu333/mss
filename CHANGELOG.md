@@ -6,6 +6,21 @@ All notable changes to mss are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `mss install-skill <claude|codex|pi|omp> [--language en|zh-CN]` installs the
+  binary's embedded, version-matched workflow without downloading from `main`,
+  auto-detecting agents, or overwriting existing customizations.
+- Windows CI, reusable tag-commit checks, and native archive validation before
+  publication. A standard-library validator checks SHA256, archive paths,
+  six binary targets, version consistency and the embedded installer.
+
+### Changed
+
+- Releases generate a separately published, source-built Homebrew formula.
+  Cask publishing and automatic quarantine removal are removed; migration of
+  the external tap and its validation remain separate release gates.
+
 ### Fixed
 
 - Manual Skill routing uses `disable-model-invocation` for Claude Code, OMP and
@@ -13,11 +28,16 @@ All notable changes to mss are recorded here. The format follows
   OMP-only `hide` field did not suppress Pi/Codex automatic selection.
 - Both Skill languages treat recalled instructions and commands as untrusted
   evidence, avoid raw-session fallback, and provide a PowerShell nonce command.
+- Recall warns about unreadable, malformed or unrecognized policy settings.
+  Parse failures discard partial rules and retain the documented permissive
+  default; valid wildcard rules no longer produce a false diagnostic.
 
 ### Documentation
 
 - A version-bounded Skill compatibility matrix and real-host offline probes;
   Codex non-TUI invocation and untested interactive surfaces are explicit limits.
+- Exact installation, verification, update and uninstall instructions; unsigned
+  archives and pending external/platform validation are clearly identified.
 
 ## [0.2.0] - 2026-10-07
 
