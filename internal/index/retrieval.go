@@ -50,13 +50,9 @@ func SearchDetailed(dir string, o query.Options) (SearchResult, error) {
 			o2.Query = strings.ReplaceAll(o.Query, "\"", " ")
 			r2, err2 := searchDetailedOnce(dir, o2)
 			if err2 == nil && len(r2.Sessions) > 0 {
-				// The retry can land on the exact tier — the words are all
-				// there, only the phrase was not — and the label about to be
-				// put on it means nothing matched. Say how many did, the same
-				// way a thin strict answer does (#3815).
-				if r2.Strict == 0 && r2.Tier != query.TierRelevance {
-					r2.Strict, r2.StrictIDs = len(r2.Sessions), sessionKeySet(r2.Sessions)
-				}
+				// Removing quotes changes the query's meaning. Matching that
+				// relaxed query is a lead, never proof of the original phrase.
+				r2.Strict, r2.StrictIDs = 0, nil
 				r2.Tier = query.TierRelevance
 				return r2, nil
 			}
@@ -261,16 +257,6 @@ func searchDetailedOnce(dir string, o query.Options) (SearchResult, error) {
 	return withRelevanceTail(dir, m, o, SearchResult{Sessions: ss, Tier: fallbackTier, Variants: fallbackVariants})
 }
 
-// sessionKeySet keys sessions the way StrictIDs is keyed, for the paths that
-// know every session they hand back matched.
-func sessionKeySet(ss []model.Session) map[string]bool {
-	out := make(map[string]bool, len(ss))
-	for _, s := range ss {
-		out[s.Harness+":"+s.ID] = true
-	}
-	return out
-}
-
 // thinAND is how few sessions an AND has to return before its own strictness
 // becomes the suspect. A question asked in plain words requires every content
 // word to be present, so on a large history it lands on a handful of sessions
@@ -331,6 +317,25 @@ func fusedPlace(relevanceRank int, strict bool) int {
 // this by exact-match scoring would undo the point.
 func withRelevanceTail(dir string, m Manifest, o query.Options, res SearchResult) (SearchResult, error) {
 	ss := res.Sessions
+	if res.Neighbour {
+		// Co-occurrence substitutes a related word, not a word form. Keep
+		// those useful leads, ranked, without claiming the user's AND matched.
+		candidates := o
+		candidates.Stemmed, candidates.FuzzyVariants = true, res.Variants
+		candidates.Tier, candidates.Strict = query.TierRelevance, 0
+		candidates.All, candidates.Limit = false, relevanceWindow
+		ranked, err := search.RunDetailed(ss, candidates)
+		if err != nil {
+			return SearchResult{}, err
+		}
+		res.Sessions = ss[:len(ranked.Hits)]
+		for i := range ranked.Hits {
+			res.Sessions[i] = ranked.Hits[i].Session
+		}
+		res.Tier, res.Strict, res.StrictIDs = query.TierRelevance, 0, nil
+		res.Total, res.Capped = ranked.Total, ranked.Capped
+		return res, nil
+	}
 	if len(ss) == 0 || len(ss) >= thinAND {
 		return res, nil
 	}
@@ -2716,16 +2721,7 @@ func scanRecordsWithVariants(dir string, m Manifest, o query.Options, offsets []
 		if !ok {
 			return
 		}
-		if o.Harness != "" && !harnessMatches(meta.Harness, o.Harness) {
-			return
-		}
-		if !query.ProjectAnyMatches(meta.Project, meta.From, o.ProjectWants()) {
-			return
-		}
-		if !fromMatches(meta.From, o.From) {
-			return
-		}
-		if o.Since > 0 && meta.Updated.Before(time.Now().Add(-o.Since)) {
+		if !sessionMetaMatches(meta, o) {
 			return
 		}
 		if !recordServable(r.Role, o) {
@@ -2883,6 +2879,9 @@ func fromMatches(sessionFrom, want string) bool {
 
 func sessionMetaMatches(meta SessionMeta, o query.Options) bool {
 	if o.ExcludeSessions[meta.ID] {
+		return false
+	}
+	if o.Session != "" && !strings.HasPrefix(meta.ID, o.Session) && !strings.HasPrefix(meta.OrigID, o.Session) {
 		return false
 	}
 	if o.Harness != "" && !harnessMatches(meta.Harness, o.Harness) {

@@ -14,6 +14,10 @@ All notable changes to mss are recorded here. The format follows
 - Windows CI, reusable tag-commit checks, and native archive validation before
   publication. A standard-library validator checks SHA256, archive paths,
   six binary targets, version consistency and the embedded installer.
+- `tools/benchmark.py`: a deterministic, isolated synthetic corpus runner
+  (Claude/Codex/Pi/OMP) measuring retrieval precision/false positives, fresh and
+  incremental indexing, query latency, index size and fault recovery, with
+  measured results published in `docs/benchmarks.md`.
 
 ### Changed
 
@@ -31,6 +35,10 @@ All notable changes to mss are recorded here. The format follows
 - Recall warns about unreadable, malformed or unrecognized policy settings.
   Parse failures discard partial rules and retain the documented permissive
   default; valid wildcard rules no longer produce a false diagnostic.
+- `search --sessions` no longer lists relevance-only neighbours in a `found`
+  answer: with a strict head the list serves only verified matches. Co-occurrence
+  substitutions and quoted-phrase relaxations are now classified as `candidates`,
+  and `--session <id>` scopes the relevance ranking as it scopes exact search.
 
 ### Documentation
 
@@ -38,6 +46,9 @@ All notable changes to mss are recorded here. The format follows
   Codex non-TUI invocation and untested interactive surfaces are explicit limits.
 - Exact installation, verification, update and uninstall instructions; unsigned
   archives and pending external/platform validation are clearly identified.
+- Bilingual READMEs rewritten around actual evidence; stale capability metadata
+  removed from the format registry; security model, benchmark methodology and
+  a pending external first-user checklist added.
 
 ## [0.2.0] - 2026-10-07
 

@@ -2953,7 +2953,7 @@ Search flags ("mss search" or the bare "mss [flags] <query>" form):
   --project <name>              only sessions from one project
   --since <duration>            only sessions newer than e.g. 30d, 12h
   --role <name>                 only match turns from one role: user, assistant,
-                                tool (tool output), files, command, edit
+                                tool (tool output), files, command, edit, summary
   --session <id>                only one session, by the id a hit prints
   --limit <1-100>               max sessions to return (default 15)
   --all                         return every match, no cap
@@ -3488,14 +3488,10 @@ const sessionsListCap = 500
 // screen, and the list's own order — hits first — answers the other question.
 const sortUpdated = "updated"
 
-// orderSessionsForList turns the retrieval set into the candidate list: what
-// the hits already proved matched, in hit order, then whatever else matched
-// by identity order. Hits prove the match — a session the scorer saw and
-// kept — so their ranking is the list's; the relevance tail, relevance
-// window rows beyond the hits, and any session a filter kept out of the
-// hits stay sorted but unranked behind them. The --session filter, which the
-// scorer honours while building hits, is re-applied: retrieval hands back
-// every matching session and the filter only bound the hits.
+// orderSessionsForList serves the full match set on found answers and the
+// ranking window on pure candidate answers. A mixed relevance result carries
+// StrictIDs: its untyped list must not turn the relevance-only tail into evidence.
+// The --session filter is re-applied because it previously bounded only hits.
 //
 // --sort updated replaces that order with last-updated first, over the whole
 // list. It runs before the cap, so the rows a capped list drops are the
@@ -3510,6 +3506,9 @@ func orderSessionsForList(dir string, ss []model.Session, hits []search.Hit, o s
 	}
 	keep := func(s model.Session) bool {
 		if o.Session != "" && !strings.HasPrefix(s.ID, o.Session) && !strings.HasPrefix(s.OrigID, o.Session) {
+			return false
+		}
+		if result.Strict > 0 && !result.IsStrict(s) {
 			return false
 		}
 		return true
@@ -3586,7 +3585,7 @@ func sessionsMatchIndices(dir string, ss []model.Session, o search.Options, resu
 	switch {
 	case result.Tier == search.TierError:
 		match = index.ErrorSigRecordMatcher(o)
-	case result.Tier == search.TierRelevance:
+	case result.Tier == search.TierRelevance && result.Strict == 0:
 		terms := index.RelevanceMatchTerms(o.Query)
 		match = func(r index.Record) bool {
 			low := strings.ToLower(r.Text)

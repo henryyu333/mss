@@ -193,12 +193,11 @@ omitted when the whole session fits. `snippets` is unchanged: the two or three
 excerpts the text output prints.
 
 
-A hit used to carry its session's whole message list, which made the size of an
-answer the size of the reader's longest transcript: on a 2,716-session store one
-relevance answer was 136 MB over 50 hits and 140,841 messages, and encoding it
-cost a second of wall time and half a gigabyte of resident memory. The same
-answer is 2.6 MB now. `mss show --json` is the surface for a whole session, and
-it carries a window (`offset`, `limit`, `total`, `returned`) for the same reason.
+Hit output bounds message windows rather than encoding every matching session's
+entire transcript. `mss show --json` is the surface for reading a wider session
+window and carries `offset`, `limit`, `total` and `returned`. Measured MSS
+performance evidence is in [benchmarks.md](benchmarks.md), not inherited corpus
+timing anecdotes.
 
 `--limit N` bounds the ranked result set to 1–100 hits, on the tiers that serve
 that cap (see [`hits` is not a fixed
@@ -240,6 +239,18 @@ the list itself stops with `capped: true`. `--re` and termless queries keep
 `hit_count` but omit `matched_indices`, which a pattern rather than terms
 produced. `hit_count` is how many records matched; `matched_indices` are their
 record numbers — each feeds `mss show <id> --harness <h> --around N` directly.
+
+On a mixed relevance answer with a strict head, `--sessions` serves only those
+verified matching sessions as `match: "found"`, with record positions that meet
+the complete query. The untyped list does not append relevance-only neighbours
+to that found set. A purely relaxed query still serves `match: "candidates"`.
+Normal ranked `search --json` retains its mixed result window and each hit's
+existing `strict` marker; its top-level `found` means at least one strict hit,
+not that every ranked hit is evidence. No JSON fields or schema version change.
+
+Co-occurrence substitutions and quoted-phrase relaxations are relevance
+candidates, not strict matches. They keep `match: "candidates"` and `strict`
+absent, even when every replacement or unquoted term appears in a session.
 
 `--exclude <id-or-prefix>` is repeatable and removes the session plus its
 lineage — the subagents it spawned and the forks that continue it — because
