@@ -20,8 +20,8 @@
   },
   "environment": {
     "arch": "arm64",
-    "binary_build_info": "<mss-binary>: go1.27.1\n\tpath\tgithub.com/henryyu333/mss/cmd/mss\n\tmod\tgithub.com/henryyu333/mss\tv0.2.1-0.20261008065339-59143ae10979+dirty\t\n\tbuild\t-buildmode=exe\n\tbuild\t-compiler=gc\n\tbuild\t-trimpath=true\n\tbuild\tDefaultGODEBUG=cryptocustomrand=1,tlssecpmlkem=0,tracebacklabels=0,urlstrictcolons=0,x509sslcertoverrideplatform=0\n\tbuild\tCGO_ENABLED=1\n\tbuild\tGOARCH=arm64\n\tbuild\tGOOS=darwin\n\tbuild\tGOARM64=v8.0\n\tbuild\tvcs=git\n\tbuild\tvcs.revision=59143ae10979e241f257aba31a15d16a51c3e16a\n\tbuild\tvcs.time=2026-10-08T06:53:39Z\n\tbuild\tvcs.modified=true",
-    "binary_sha256": "5eebfdd4406ec6e2bf443b7681a8fe0ebcd145d6244647e58bd62d11e1bea5cb",
+    "binary_build_info": "<mss-binary>: go1.27.1\n\tpath\tgithub.com/henryyu333/mss/cmd/mss\n\tmod\tgithub.com/henryyu333/mss\tv0.2.1-0.20261008082323-14f058b768f0+dirty\t\n\tbuild\t-buildmode=exe\n\tbuild\t-compiler=gc\n\tbuild\t-trimpath=true\n\tbuild\tDefaultGODEBUG=cryptocustomrand=1,tlssecpmlkem=0,tracebacklabels=0,urlstrictcolons=0,x509sslcertoverrideplatform=0\n\tbuild\tCGO_ENABLED=1\n\tbuild\tGOARCH=arm64\n\tbuild\tGOOS=darwin\n\tbuild\tGOARM64=v8.0\n\tbuild\tvcs=git\n\tbuild\tvcs.revision=14f058b768f0369e7c4fc999da7d4dd97ed57062\n\tbuild\tvcs.time=2026-10-08T08:23:23Z\n\tbuild\tvcs.modified=true",
+    "binary_sha256": "cbdf7c9b05a0ca8df106f16a60d8e912ba6cd103ee2249f0ff8f7006ac91e5ae",
     "cpu_name": "arm",
     "go_version": "go1.27.1",
     "go_version_source": "go version -m supplied binary",
@@ -33,14 +33,14 @@
   },
   "intentional_index_damage": {
     "after": {
-      "bytes": 92475,
+      "bytes": 92477,
       "files": 31,
-      "sha256": "207ad0334715ed8851c7c6906d8389b6a6379b3146926baccff586908ea259af"
+      "sha256": "babc447b08384f75284ba1d2b7d717be92690cae3103665808cb57303967dbdb"
     },
     "before": {
-      "bytes": 175797,
+      "bytes": 175799,
       "files": 31,
-      "sha256": "6dc2462607597e8df6ea3eac202a3aa21023013ff1c50d24571cafb67d7413ba"
+      "sha256": "940789b1b57a26cbb7bb3b0e45db8110f5847a69ffc6ef73808d8e2488d03654"
     },
     "operation": "truncate to zero bytes",
     "target": "records.bin"
@@ -905,7 +905,7 @@
       "sources_unchanged": true,
       "stderr": "",
       "stdout_bytes": 10,
-      "wall_seconds": 0.10017758300000001
+      "wall_seconds": 0.009392833999999989
     },
     {
       "arguments": [
@@ -926,7 +926,7 @@
       "sources_unchanged": true,
       "stderr": "",
       "stdout_bytes": 0,
-      "wall_seconds": 0.11978379100000003
+      "wall_seconds": 0.15697320800000003
     },
     {
       "arguments": [
@@ -947,7 +947,7 @@
       "sources_unchanged": true,
       "stderr": "",
       "stdout_bytes": 0,
-      "wall_seconds": 0.010380874999999956
+      "wall_seconds": 0.011278541999999975
     },
     {
       "arguments": [
@@ -969,9 +969,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: showing 15 of 32 \u2014 add --all to see the rest\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: showing 15 of 32 \u2014 add --all to see the rest\n",
       "stdout_bytes": 16497,
-      "wall_seconds": 0.012155457999999952
+      "wall_seconds": 0.012590416999999965
     },
     {
       "arguments": [
@@ -998,9 +998,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2455,
-      "wall_seconds": 0.009929958000000016
+      "wall_seconds": 0.010548541999999994
     },
     {
       "arguments": [
@@ -1027,9 +1027,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2416,
-      "wall_seconds": 0.01011525000000002
+      "wall_seconds": 0.010052665999999988
     },
     {
       "arguments": [
@@ -1056,9 +1056,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2386,
-      "wall_seconds": 0.010700582999999986
+      "wall_seconds": 0.01077125000000001
     },
     {
       "arguments": [
@@ -1085,9 +1085,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2390,
-      "wall_seconds": 0.010637708999999995
+      "wall_seconds": 0.010474541000000004
     },
     {
       "arguments": [
@@ -1114,9 +1114,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2402,
-      "wall_seconds": 0.010252542000000031
+      "wall_seconds": 0.01058020799999998
     },
     {
       "arguments": [
@@ -1143,9 +1143,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2416,
-      "wall_seconds": 0.010239999999999971
+      "wall_seconds": 0.010437083000000014
     },
     {
       "arguments": [
@@ -1172,9 +1172,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2386,
-      "wall_seconds": 0.010125249999999975
+      "wall_seconds": 0.010619749999999983
     },
     {
       "arguments": [
@@ -1201,9 +1201,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2390,
-      "wall_seconds": 0.010105833000000009
+      "wall_seconds": 0.010558375000000009
     },
     {
       "arguments": [
@@ -1230,9 +1230,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2402,
-      "wall_seconds": 0.009836791000000011
+      "wall_seconds": 0.010583834000000014
     },
     {
       "arguments": [
@@ -1259,9 +1259,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2416,
-      "wall_seconds": 0.010261041000000026
+      "wall_seconds": 0.010716417000000034
     },
     {
       "arguments": [
@@ -1288,9 +1288,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2386,
-      "wall_seconds": 0.009853082999999985
+      "wall_seconds": 0.010086583000000038
     },
     {
       "arguments": [
@@ -1317,9 +1317,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2390,
-      "wall_seconds": 0.010859541999999944
+      "wall_seconds": 0.01040545899999995
     },
     {
       "arguments": [
@@ -1346,9 +1346,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2402,
-      "wall_seconds": 0.010027083999999964
+      "wall_seconds": 0.010341541999999981
     },
     {
       "arguments": [
@@ -1375,9 +1375,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2416,
-      "wall_seconds": 0.010457625000000026
+      "wall_seconds": 0.009666167000000003
     },
     {
       "arguments": [
@@ -1404,9 +1404,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2386,
-      "wall_seconds": 0.010768792000000027
+      "wall_seconds": 0.010109750000000028
     },
     {
       "arguments": [
@@ -1433,9 +1433,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2390,
-      "wall_seconds": 0.01036795800000001
+      "wall_seconds": 0.00962083299999994
     },
     {
       "arguments": [
@@ -1462,9 +1462,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2546,
-      "wall_seconds": 0.010229457999999969
+      "wall_seconds": 0.00991300000000006
     },
     {
       "arguments": [
@@ -1491,9 +1491,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2560,
-      "wall_seconds": 0.010569207999999941
+      "wall_seconds": 0.011207917000000012
     },
     {
       "arguments": [
@@ -1520,9 +1520,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2530,
-      "wall_seconds": 0.010190250000000067
+      "wall_seconds": 0.010312792000000015
     },
     {
       "arguments": [
@@ -1549,9 +1549,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2534,
-      "wall_seconds": 0.009996583000000059
+      "wall_seconds": 0.009890875000000077
     },
     {
       "arguments": [
@@ -1578,9 +1578,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2546,
-      "wall_seconds": 0.00992529200000003
+      "wall_seconds": 0.01007558399999997
     },
     {
       "arguments": [
@@ -1607,9 +1607,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2560,
-      "wall_seconds": 0.010181875000000007
+      "wall_seconds": 0.010219500000000048
     },
     {
       "arguments": [
@@ -1636,9 +1636,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2530,
-      "wall_seconds": 0.010259083000000002
+      "wall_seconds": 0.010390584000000036
     },
     {
       "arguments": [
@@ -1665,9 +1665,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2534,
-      "wall_seconds": 0.009886542000000054
+      "wall_seconds": 0.01045579200000002
     },
     {
       "arguments": [
@@ -1694,9 +1694,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2546,
-      "wall_seconds": 0.010557957999999923
+      "wall_seconds": 0.010581375000000004
     },
     {
       "arguments": [
@@ -1723,9 +1723,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2560,
-      "wall_seconds": 0.010201542000000008
+      "wall_seconds": 0.010426625000000023
     },
     {
       "arguments": [
@@ -1752,9 +1752,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2530,
-      "wall_seconds": 0.010625375000000048
+      "wall_seconds": 0.010512791999999993
     },
     {
       "arguments": [
@@ -1781,9 +1781,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2534,
-      "wall_seconds": 0.009983332999999983
+      "wall_seconds": 0.010486499999999954
     },
     {
       "arguments": [
@@ -1810,9 +1810,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2546,
-      "wall_seconds": 0.01082354200000002
+      "wall_seconds": 0.01016450000000002
     },
     {
       "arguments": [
@@ -1839,9 +1839,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2560,
-      "wall_seconds": 0.009794415999999972
+      "wall_seconds": 0.010692041000000096
     },
     {
       "arguments": [
@@ -1868,9 +1868,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2530,
-      "wall_seconds": 0.010249332999999972
+      "wall_seconds": 0.009716625000000034
     },
     {
       "arguments": [
@@ -1897,9 +1897,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2534,
-      "wall_seconds": 0.009681625000000027
+      "wall_seconds": 0.010374042000000028
     },
     {
       "arguments": [
@@ -1923,9 +1923,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: showing 15 of 16 \u2014 add --all to see the rest\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: showing 15 of 16 \u2014 add --all to see the rest\n",
       "stdout_bytes": 8313,
-      "wall_seconds": 0.011446124999999974
+      "wall_seconds": 0.011314666999999945
     },
     {
       "arguments": [
@@ -1949,9 +1949,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: showing 15 of 16 \u2014 add --all to see the rest\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: showing 15 of 16 \u2014 add --all to see the rest\n",
       "stdout_bytes": 8393,
-      "wall_seconds": 0.011338791000000015
+      "wall_seconds": 0.011909583000000001
     },
     {
       "arguments": [
@@ -1975,9 +1975,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: 8 sessions hold every word of the query; the rest below are ranked by relevance\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: 8 sessions hold every word of the query; the rest below are ranked by relevance\n",
       "stdout_bytes": 4431,
-      "wall_seconds": 0.011732458000000001
+      "wall_seconds": 0.011560000000000015
     },
     {
       "arguments": [
@@ -1999,9 +1999,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: showing 15 of 16 \u2014 add --all to see the rest\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: showing 15 of 16 \u2014 add --all to see the rest\n",
       "stdout_bytes": 8316,
-      "wall_seconds": 0.011335167000000035
+      "wall_seconds": 0.011966625000000009
     },
     {
       "arguments": [
@@ -2023,9 +2023,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: showing 15 of 16 \u2014 add --all to see the rest\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: showing 15 of 16 \u2014 add --all to see the rest\n",
       "stdout_bytes": 8317,
-      "wall_seconds": 0.01174970799999997
+      "wall_seconds": 0.011281125000000003
     },
     {
       "arguments": [
@@ -2049,9 +2049,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2188,
-      "wall_seconds": 0.011215708000000046
+      "wall_seconds": 0.011540749999999989
     },
     {
       "arguments": [
@@ -2077,9 +2077,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 710,
-      "wall_seconds": 0.01118412499999999
+      "wall_seconds": 0.010801917000000105
     },
     {
       "arguments": [
@@ -2103,9 +2103,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: showing 15 of 16 \u2014 add --all to see the rest\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: showing 15 of 16 \u2014 add --all to see the rest\n",
       "stdout_bytes": 8314,
-      "wall_seconds": 0.011809250000000104
+      "wall_seconds": 0.011923499999999976
     },
     {
       "arguments": [
@@ -2129,9 +2129,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: no exact match; showing sessions ranked by relevance to the whole query\nmss: showing 8 of 24 \u2014 add --all to see the rest\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: no exact match; showing sessions ranked by relevance to the whole query\nmss: showing 8 of 24 \u2014 add --all to see the rest\n",
       "stdout_bytes": 3986,
-      "wall_seconds": 0.012147458999999916
+      "wall_seconds": 0.012324416999999976
     },
     {
       "arguments": [
@@ -2153,9 +2153,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: no matches in 64 indexed sessions \u2014 try fewer words or --re (query \"\\\"copper velvet\\\"\")\nmss: on their own: \"copper\" in 24, \"velvet\" in 24 \u2014 no session has them together\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: no matches in 64 indexed sessions \u2014 try fewer words or --re (query \"\\\"copper velvet\\\"\")\nmss: on their own: \"copper\" in 24, \"velvet\" in 24 \u2014 no session has them together\n",
       "stdout_bytes": 212,
-      "wall_seconds": 0.012308374999999927
+      "wall_seconds": 0.01305895800000001
     },
     {
       "arguments": [
@@ -2177,9 +2177,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: no exact match; showing sessions ranked by relevance to the whole query\nmss: showing 50 of 52 \u2014 add --all to see the rest\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: no exact match; showing sessions ranked by relevance to the whole query\nmss: showing 50 of 52 \u2014 add --all to see the rest\n",
       "stdout_bytes": 25649,
-      "wall_seconds": 0.016069083000000095
+      "wall_seconds": 0.016076916999999913
     },
     {
       "arguments": [
@@ -2201,9 +2201,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: no matches in 64 indexed sessions \u2014 try fewer words or --re (query \"zzqqvvmissneedle aaqqvvabsentword xxqqvvunknownterm\")\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: no matches in 64 indexed sessions \u2014 try fewer words or --re (query \"zzqqvvmissneedle aaqqvvabsentword xxqqvvunknownterm\")\n",
       "stdout_bytes": 246,
-      "wall_seconds": 0.01222258399999987
+      "wall_seconds": 0.012388040999999905
     },
     {
       "arguments": [
@@ -2225,9 +2225,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: showing 15 of 32 \u2014 add --all to see the rest\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: showing 15 of 32 \u2014 add --all to see the rest\n",
       "stdout_bytes": 16497,
-      "wall_seconds": 0.012760125000000011
+      "wall_seconds": 0.012997540999999835
     },
     {
       "arguments": [
@@ -2251,9 +2251,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: showing 15 of 16 \u2014 add --all to see the rest\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: showing 15 of 16 \u2014 add --all to see the rest\n",
       "stdout_bytes": 8313,
-      "wall_seconds": 0.011406124999999934
+      "wall_seconds": 0.012337542000000035
     },
     {
       "arguments": [
@@ -2277,9 +2277,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: showing 15 of 16 \u2014 add --all to see the rest\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: showing 15 of 16 \u2014 add --all to see the rest\n",
       "stdout_bytes": 8393,
-      "wall_seconds": 0.013443375000000035
+      "wall_seconds": 0.012983624999999943
     },
     {
       "arguments": [
@@ -2303,9 +2303,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: 8 sessions hold every word of the query; the rest below are ranked by relevance\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: 8 sessions hold every word of the query; the rest below are ranked by relevance\n",
       "stdout_bytes": 4431,
-      "wall_seconds": 0.012074209000000113
+      "wall_seconds": 0.012028624999999904
     },
     {
       "arguments": [
@@ -2327,9 +2327,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: showing 15 of 16 \u2014 add --all to see the rest\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: showing 15 of 16 \u2014 add --all to see the rest\n",
       "stdout_bytes": 8316,
-      "wall_seconds": 0.012399416999999913
+      "wall_seconds": 0.012251750000000117
     },
     {
       "arguments": [
@@ -2351,9 +2351,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: showing 15 of 16 \u2014 add --all to see the rest\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: showing 15 of 16 \u2014 add --all to see the rest\n",
       "stdout_bytes": 8317,
-      "wall_seconds": 0.01179520799999989
+      "wall_seconds": 0.011642208000000043
     },
     {
       "arguments": [
@@ -2377,9 +2377,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2188,
-      "wall_seconds": 0.01143187499999998
+      "wall_seconds": 0.011233625000000025
     },
     {
       "arguments": [
@@ -2405,9 +2405,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 710,
-      "wall_seconds": 0.010843292000000115
+      "wall_seconds": 0.011736082999999953
     },
     {
       "arguments": [
@@ -2431,9 +2431,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: showing 15 of 16 \u2014 add --all to see the rest\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: showing 15 of 16 \u2014 add --all to see the rest\n",
       "stdout_bytes": 8314,
-      "wall_seconds": 0.01209283300000008
+      "wall_seconds": 0.011734042000000056
     },
     {
       "arguments": [
@@ -2457,9 +2457,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: no exact match; showing sessions ranked by relevance to the whole query\nmss: showing 8 of 24 \u2014 add --all to see the rest\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: no exact match; showing sessions ranked by relevance to the whole query\nmss: showing 8 of 24 \u2014 add --all to see the rest\n",
       "stdout_bytes": 3986,
-      "wall_seconds": 0.012095999999999885
+      "wall_seconds": 0.012872375000000158
     },
     {
       "arguments": [
@@ -2481,9 +2481,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: no matches in 64 indexed sessions \u2014 try fewer words or --re (query \"\\\"copper velvet\\\"\")\nmss: on their own: \"copper\" in 24, \"velvet\" in 24 \u2014 no session has them together\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: no matches in 64 indexed sessions \u2014 try fewer words or --re (query \"\\\"copper velvet\\\"\")\nmss: on their own: \"copper\" in 24, \"velvet\" in 24 \u2014 no session has them together\n",
       "stdout_bytes": 212,
-      "wall_seconds": 0.01256145799999997
+      "wall_seconds": 0.012527833999999904
     },
     {
       "arguments": [
@@ -2505,9 +2505,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: no exact match; showing sessions ranked by relevance to the whole query\nmss: showing 50 of 52 \u2014 add --all to see the rest\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: no exact match; showing sessions ranked by relevance to the whole query\nmss: showing 50 of 52 \u2014 add --all to see the rest\n",
       "stdout_bytes": 25649,
-      "wall_seconds": 0.015512874999999982
+      "wall_seconds": 0.016264708999999877
     },
     {
       "arguments": [
@@ -2529,9 +2529,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: no matches in 64 indexed sessions \u2014 try fewer words or --re (query \"zzqqvvmissneedle aaqqvvabsentword xxqqvvunknownterm\")\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: no matches in 64 indexed sessions \u2014 try fewer words or --re (query \"zzqqvvmissneedle aaqqvvabsentword xxqqvvunknownterm\")\n",
       "stdout_bytes": 246,
-      "wall_seconds": 0.012431667000000202
+      "wall_seconds": 0.012575707999999963
     },
     {
       "arguments": [
@@ -2555,9 +2555,9 @@
         "sha256": "8013025953a0fb4cc6853937b0ea6d3f42c5c27c8139c6e30d54e3c97c23161b"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 963,
-      "wall_seconds": 0.011159249999999954
+      "wall_seconds": 0.01157783400000012
     },
     {
       "arguments": [
@@ -2578,7 +2578,7 @@
       "sources_unchanged": true,
       "stderr": "",
       "stdout_bytes": 0,
-      "wall_seconds": 0.06846504200000014
+      "wall_seconds": 0.06933612499999997
     },
     {
       "arguments": [
@@ -2600,9 +2600,9 @@
         "sha256": "055181ccc9001bc82c6c26ec6ec1b1077f0895260d48a982c88668067af2267a"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: showing 15 of 64 \u2014 add --all to see the rest\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: showing 15 of 64 \u2014 add --all to see the rest\n",
       "stdout_bytes": 32469,
-      "wall_seconds": 0.013301500000000077
+      "wall_seconds": 0.013976583000000042
     },
     {
       "arguments": [
@@ -2629,9 +2629,9 @@
         "sha256": "055181ccc9001bc82c6c26ec6ec1b1077f0895260d48a982c88668067af2267a"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2595,
-      "wall_seconds": 0.010248000000000035
+      "wall_seconds": 0.010705708000000147
     },
     {
       "arguments": [
@@ -2658,9 +2658,9 @@
         "sha256": "055181ccc9001bc82c6c26ec6ec1b1077f0895260d48a982c88668067af2267a"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2556,
-      "wall_seconds": 0.010388000000000064
+      "wall_seconds": 0.010622332999999928
     },
     {
       "arguments": [
@@ -2687,9 +2687,9 @@
         "sha256": "055181ccc9001bc82c6c26ec6ec1b1077f0895260d48a982c88668067af2267a"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2526,
-      "wall_seconds": 0.009692207999999924
+      "wall_seconds": 0.010819334000000014
     },
     {
       "arguments": [
@@ -2716,9 +2716,9 @@
         "sha256": "055181ccc9001bc82c6c26ec6ec1b1077f0895260d48a982c88668067af2267a"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2530,
-      "wall_seconds": 0.01059325000000011
+      "wall_seconds": 0.010367459000000023
     },
     {
       "arguments": [
@@ -2741,7 +2741,7 @@
       "sources_unchanged": true,
       "stderr": "mss: updated 1 file (0 new messages) \u2014 1 line skipped, mss could not read it\nmss: showing 15 of 32 \u2014 add --all to see the rest\n",
       "stdout_bytes": 16454,
-      "wall_seconds": 0.024735584000000088
+      "wall_seconds": 0.022580708000000005
     },
     {
       "arguments": [
@@ -2764,7 +2764,7 @@
       "sources_unchanged": true,
       "stderr": "mss: re-reading 1 changed transcript\nmss: showing 15 of 31 \u2014 add --all to see the rest\n",
       "stdout_bytes": 15947,
-      "wall_seconds": 0.09174733400000012
+      "wall_seconds": 0.09032179200000012
     },
     {
       "arguments": [
@@ -2787,7 +2787,7 @@
       "sources_unchanged": true,
       "stderr": "mss: 1 transcript no longer on disk \u2014 still searchable\nmss: showing 15 of 31 \u2014 add --all to see the rest\n",
       "stdout_bytes": 15947,
-      "wall_seconds": 0.013131291999999961
+      "wall_seconds": 0.013507709000000201
     },
     {
       "arguments": [
@@ -2813,9 +2813,9 @@
         "sha256": "d00ea077dbe48eac7be0aaaf88d4b5f39e6dc5bc6f362c53f9cbf7ea0bba7945"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 765,
-      "wall_seconds": 0.01114204200000013
+      "wall_seconds": 0.011568750000000128
     },
     {
       "arguments": [
@@ -2842,9 +2842,9 @@
         "sha256": "d00ea077dbe48eac7be0aaaf88d4b5f39e6dc5bc6f362c53f9cbf7ea0bba7945"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2674,
-      "wall_seconds": 0.010603957999999913
+      "wall_seconds": 0.010739666000000092
     },
     {
       "arguments": [
@@ -2867,7 +2867,7 @@
       "sources_unchanged": true,
       "stderr": "mss: re-reading 3 changed transcripts, 3 sessions replaced\nmss: showing 15 of 32 \u2014 add --all to see the rest\n",
       "stdout_bytes": 16422,
-      "wall_seconds": 0.09685120799999991
+      "wall_seconds": 0.09175395900000005
     },
     {
       "arguments": [
@@ -2889,9 +2889,9 @@
         "sha256": "055181ccc9001bc82c6c26ec6ec1b1077f0895260d48a982c88668067af2267a"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: the index is damaged \u2014 `mss index` rebuilds it (--no-refresh never writes)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: the index is damaged \u2014 `mss index` rebuilds it (--no-refresh never writes)\n",
       "stdout_bytes": 0,
-      "wall_seconds": 0.010171458000000078
+      "wall_seconds": 0.010771875000000097
     },
     {
       "arguments": [
@@ -2914,7 +2914,7 @@
       "sources_unchanged": true,
       "stderr": "mss: the index in <synthetic-root>/index could not be read and is being rebuilt ...\nmss: claude: 16 sessions, 208 messages\nmss: codex: 16 sessions, 208 messages\nmss: pi: 16 sessions, 208 messages\nmss: omp: 16 sessions, 208 messages\nmss: showing 15 of 32 \u2014 add --all to see the rest\n",
       "stdout_bytes": 16422,
-      "wall_seconds": 0.11457520799999998
+      "wall_seconds": 0.11218520900000017
     },
     {
       "arguments": [
@@ -2941,9 +2941,9 @@
         "sha256": "055181ccc9001bc82c6c26ec6ec1b1077f0895260d48a982c88668067af2267a"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:42 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2595,
-      "wall_seconds": 0.010023875000000126
+      "wall_seconds": 0.010291290999999925
     },
     {
       "arguments": [
@@ -2970,9 +2970,9 @@
         "sha256": "055181ccc9001bc82c6c26ec6ec1b1077f0895260d48a982c88668067af2267a"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:42 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2556,
-      "wall_seconds": 0.009980292000000057
+      "wall_seconds": 0.009867416999999934
     },
     {
       "arguments": [
@@ -2999,9 +2999,9 @@
         "sha256": "055181ccc9001bc82c6c26ec6ec1b1077f0895260d48a982c88668067af2267a"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:42 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2526,
-      "wall_seconds": 0.009763959000000044
+      "wall_seconds": 0.010076250000000009
     },
     {
       "arguments": [
@@ -3028,9 +3028,9 @@
         "sha256": "055181ccc9001bc82c6c26ec6ec1b1077f0895260d48a982c88668067af2267a"
       },
       "sources_unchanged": true,
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\n",
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:42 (run `mss index` to refresh it)\n",
       "stdout_bytes": 2530,
-      "wall_seconds": 0.01002600000000009
+      "wall_seconds": 0.00987729100000001
     }
   ],
   "parameters": {
@@ -7256,7 +7256,7 @@
       "exit_code": 1,
       "index_unchanged": true,
       "status": "PASS",
-      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 07:40 (run `mss index` to refresh it)\nmss: the index is damaged \u2014 `mss index` rebuilds it (--no-refresh never writes)"
+      "stderr": "mss: answering from the index as it was \u2014 no refresh ran; it was last refreshed 2026-10-08 08:41 (run `mss index` to refresh it)\nmss: the index is damaged \u2014 `mss index` rebuilds it (--no-refresh never writes)"
     },
     "damaged_index_rebuild": {
       "coverage": {
@@ -7323,74 +7323,74 @@
   },
   "status": "PASS",
   "timings": {
-    "first_fresh_index_seconds": 0.11978379100000003,
-    "incremental_append_refresh_seconds": 0.06846504200000014,
+    "first_fresh_index_seconds": 0.15697320800000003,
+    "incremental_append_refresh_seconds": 0.06933612499999997,
     "query_latency": {
       "distribution": "round-robin over the 13 labeled queries",
       "includes_process_startup": true,
       "includes_python_json_decoding": false,
       "includes_source_hashing": false,
-      "p50_seconds": 0.012095999999999885,
-      "p95_seconds": 0.015512874999999982,
+      "p50_seconds": 0.012337542000000035,
+      "p95_seconds": 0.016264708999999877,
       "percentile_method": "nearest rank",
       "refresh": false,
       "sample_count": 13,
       "samples": [
         {
           "label": "and_mixed_harness",
-          "seconds": 0.012760125000000011
+          "seconds": 0.012997540999999835
         },
         {
           "label": "and_user_role",
-          "seconds": 0.011406124999999934
+          "seconds": 0.012337542000000035
         },
         {
           "label": "and_assistant_role",
-          "seconds": 0.013443375000000035
+          "seconds": 0.012983624999999943
         },
         {
           "label": "and_codex_filter",
-          "seconds": 0.012074209000000113
+          "seconds": 0.012028624999999904
         },
         {
           "label": "and_second_topic",
-          "seconds": 0.012399416999999913
+          "seconds": 0.012251750000000117
         },
         {
           "label": "phrase_mixed_harness",
-          "seconds": 0.01179520799999989
+          "seconds": 0.011642208000000043
         },
         {
           "label": "phrase_pi_filter",
-          "seconds": 0.01143187499999998
+          "seconds": 0.011233625000000025
         },
         {
           "label": "phrase_exact_session",
-          "seconds": 0.010843292000000115
+          "seconds": 0.011736082999999953
         },
         {
           "label": "assistant_only_topic",
-          "seconds": 0.01209283300000008
+          "seconds": 0.011734042000000056
         },
         {
           "label": "wrong_role_boundary",
-          "seconds": 0.012095999999999885
+          "seconds": 0.012872375000000158
         },
         {
           "label": "near_phrase_reversed",
-          "seconds": 0.01256145799999997
+          "seconds": 0.012527833999999904
         },
         {
           "label": "near_multiterm_candidates",
-          "seconds": 0.015512874999999982
+          "seconds": 0.016264708999999877
         },
         {
           "label": "absent_vocabulary",
-          "seconds": 0.012431667000000202
+          "seconds": 0.012575707999999963
         }
       ]
     },
-    "unchanged_refresh_seconds": 0.010380874999999956
+    "unchanged_refresh_seconds": 0.011278541999999975
   },
   "verified_windows": [
     {

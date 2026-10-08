@@ -229,8 +229,8 @@ performance promise or a cross-OS result:
 
 | Sessions | Messages | Source | Fresh index | First build | Unchanged refresh | Incremental append | Query p50 | Query p95 |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2,000 | 24,000 | 6.8 MB | 5.2 MB | 0.716 s | 0.027 s | 0.194 s (100 tails) | 25.6 ms | 34.4 ms |
-| 10,000 | 120,000 | 34.2 MB | 25.9 MB | 3.817 s | 0.097 s | 0.622 s (100 tails) | 79.7 ms | 112.7 ms |
+| 2,000 | 24,000 | 6.8 MB | 5.2 MB | 0.652 s | 0.028 s | 0.199 s (100 tails) | 25.6 ms | 35.2 ms |
+| 10,000 | 120,000 | 34.2 MB | 25.9 MB | 3.885 s | 0.099 s | 0.676 s (100 tails) | 80.2 ms | 116.2 ms |
 
 Both runs: all 13 frozen gold labels PASS, micro precision 1.0 and recall 1.0
 with 0 false positives / 0 false negatives over the labeled set, all six fault
@@ -238,20 +238,22 @@ injection phases PASS (malformed, corrupt, missing, restored sources; damaged
 index rejection and rebuild), every source digest unchanged around every MSS
 invocation, the invented secret redacted in `search`/`show`, and the historical
 injection created no sentinel. The 64-session smoke with the same assertions
-PASSes as well. Query latency is 25 pooled round-robin subprocess samples,
-including process startup, not per-query percentiles.
+PASSes (0.157 s first build, 12.3 ms p50). Query latency is 25 pooled round-robin
+subprocess samples, including process startup, not per-query percentiles.
 
 Developing this benchmark surfaced three real defects that it now pins as
 regressions: a `found` `--sessions` list mixing in relevance-only neighbours,
 relevance ranking escaping a `--session` scope, and co-occurrence/quoted-phrase
-relaxations classified as strict matches. The reports below were produced after
-those fixes; earlier failed artifacts were superseded, not relabeled.
+relaxations classified as strict matches (the sentence-level rescue path was
+caught by independent review after the first fix). All three reports below were
+regenerated against the final binary, so they share one binary SHA-256; earlier
+failed artifacts were superseded, not relabeled.
 
 Reports (full invocations, gold sets, coverage and digests):
 [64](benchmark-results/macos-arm64-64.json),
-[2000](benchmark-results/macos-arm64-2000-verified.json),
-[10000](benchmark-results/macos-arm64-10000-verified.json).
-SHA-256: `d4e2f878…f30b`, `b4ac39e7…9b863`, `42d76586…d0de7`.
+[2000](benchmark-results/macos-arm64-2000.json),
+[10000](benchmark-results/macos-arm64-10000.json).
+SHA-256: `ea267bb1…23b917`, `612a4b55…51670`, `695b1713…0e989`.
 
 A report with `status: "FAIL"` is a failed consumer assertion or execution, not
 a number to discard or a reason to relabel the gold. Diagnose the actual failure,

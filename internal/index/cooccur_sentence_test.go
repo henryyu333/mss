@@ -160,4 +160,12 @@ func TestTheLadderReachesTheNeighbourRescue(t *testing.T) {
 	if !strings.Contains(strings.Join(ids, " "), "answer") {
 		t.Errorf("the ladder never reached the rescue: tier=%q %v", res.Tier, ids)
 	}
+	if res.Tier != query.TierRelevance || res.Strict != 0 {
+		t.Errorf("a neighbour substitution was published as a lexical match: tier=%q strict=%d", res.Tier, res.Strict)
+	}
+	for _, s := range res.Sessions {
+		if res.IsStrict(s) {
+			t.Errorf("%q arrived through a substituted word but is named a strict match", s.ID)
+		}
+	}
 }

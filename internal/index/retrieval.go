@@ -210,7 +210,11 @@ func searchDetailedOnce(dir string, o query.Options) (SearchResult, error) {
 			// try — the project's own word for what the reader asked about —
 			// and asking it over the question's identifying words is what
 			// makes it readable by a sentence (#2331).
-			return cooccurNarrowedSearch(dir, m, o)
+			result, rerr := cooccurNarrowedSearch(dir, m, o)
+			if rerr != nil || len(result.Sessions) == 0 {
+				return result, rerr
+			}
+			return withRelevanceTail(dir, m, o, result)
 		}
 		ss, err := scanRecords(dir, m, o, nil)
 		return SearchResult{Sessions: ss, Tier: fallbackTier, Variants: fallbackVariants}, err
@@ -319,21 +323,16 @@ func withRelevanceTail(dir string, m Manifest, o query.Options, res SearchResult
 	ss := res.Sessions
 	if res.Neighbour {
 		// Co-occurrence substitutes a related word, not a word form. Keep
-		// those useful leads, ranked, without claiming the user's AND matched.
-		candidates := o
-		candidates.Stemmed, candidates.FuzzyVariants = true, res.Variants
-		candidates.Tier, candidates.Strict = query.TierRelevance, 0
-		candidates.All, candidates.Limit = false, relevanceWindow
-		ranked, err := search.RunDetailed(ss, candidates)
-		if err != nil {
-			return SearchResult{}, err
-		}
-		res.Sessions = ss[:len(ranked.Hits)]
-		for i := range ranked.Hits {
-			res.Sessions[i] = ranked.Hits[i].Session
-		}
+		// those useful leads in the order the rescue gathered them, without
+		// claiming the user's words matched: re-scoring the original query
+		// against the substituted sessions would drop every one of them —
+		// by construction the answer does not contain the reader's word.
 		res.Tier, res.Strict, res.StrictIDs = query.TierRelevance, 0, nil
-		res.Total, res.Capped = ranked.Total, ranked.Capped
+		res.Total = len(ss)
+		if len(ss) > relevanceWindow {
+			res.Sessions = ss[:relevanceWindow]
+			res.Capped = true
+		}
 		return res, nil
 	}
 	if len(ss) == 0 || len(ss) >= thinAND {
