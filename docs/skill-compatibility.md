@@ -1,6 +1,7 @@
 # Manual Skill compatibility
 
-Checked on 2026-10-08. Session **parsing** support and Skill **invocation** support
+Checked on 2026-10-09, including v0.3.0-rc.1 headless real-model runs on the
+release machine. Session **parsing** support and Skill **invocation** support
 are different contracts. A parser fixture does not prove that an agent loads a
 Skill correctly. MSS ships one workflow in English and Chinese, not an agent
 plugin, hook, MCP server, or automatic memory system.
@@ -9,10 +10,10 @@ plugin, hook, MCP server, or automatic memory system.
 
 | Harness | User installation path | Manual entry | Automatic-selection control | Evidence / remaining check |
 | --- | --- | --- | --- | --- |
-| Claude Code | `~/.claude/skills/mss/SKILL.md` | `/mss <question>` | `disable-model-invocation: true` | [Official specification](https://code.claude.com/docs/en/skills#control-who-invokes-a-skill); local CLI 2.1.284 present, interactive invocation not exercised |
-| OMP | `~/.omp/agent/skills/mss/SKILL.md` | `/skill:mss <question>` | `disable-model-invocation: true` (normalized to hidden metadata) | [Official specification and implementation](https://github.com/can1357/oh-my-pi/blob/main/docs/skills.md); local CLI 18.8.0 present, interactive invocation not exercised; skill commands must be enabled |
-| Pi | `~/.pi/agent/skills/mss/SKILL.md` | `/skill:mss <question>` | `disable-model-invocation: true` | Pi 1.0.4 real loader: both languages discoverable and absent from automatic prompt; interactive command still needs acceptance; [specification](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md) |
-| Codex CLI | `~/.agents/skills/mss/SKILL.md` **and** `agents/openai.yaml` | select MSS with `/skills` / `$` picker; see non-TUI limitation below | `policy.allow_implicit_invocation: false` in the companion YAML | Codex 0.160.1 `debug prompt-input`: both languages absent from ordinary-chat prompt; TUI picker not exercised; [specification](https://learn.chatgpt.com/docs/build-skills) |
+| Claude Code | `~/.claude/skills/mss/SKILL.md` | `/mss <question>` | `disable-model-invocation: true` | [Official specification](https://code.claude.com/docs/en/skills#control-who-invokes-a-skill); local CLI 2.1.284 present; headless invocation PENDING — this machine's automation context has no Claude Code credentials (no keychain item or credentials file; the CLI reports "Not logged in"), and the TUI was not driven |
+| OMP | `~/.omp/agent/skills/mss/SKILL.md` | `/skill:mss <question>` | `disable-model-invocation: true` (normalized to hidden metadata) | [Official specification and implementation](https://github.com/can1357/oh-my-pi/blob/main/docs/skills.md); v0.3.0-rc.1 `/skill:mss` ran a real model session through the full workflow (nonce, index, search, show) with the RC skill body injected — headless; skill commands must be enabled; TUI not driven |
+| Pi | `~/.pi/agent/skills/mss/SKILL.md` | `/skill:mss <question>` | `disable-model-invocation: true` | Pi 1.0.4 real loader: both languages discoverable and absent from automatic prompt; v0.3.0-rc.1 `--skill` plus `/skill:mss` ran the full workflow headlessly with correct citations; TUI acceptance remains; [specification](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md) |
+| Codex CLI | `~/.agents/skills/mss/SKILL.md` **and** `agents/openai.yaml` | select MSS with `/skills` / `$` picker; see non-TUI limitation below | `policy.allow_implicit_invocation: false` in the companion YAML | Codex 0.160.1 `debug prompt-input`: both languages absent from ordinary-chat prompt; v0.3.0-rc.1 headless `codex exec` reached the workflow only through an explicit skill-file read (non-TUI `$mss` still does not expand, #40600); TUI picker not exercised; [specification](https://learn.chatgpt.com/docs/build-skills) |
 
 `hide: true` was OMP-specific, not a portable control. It left the former MSS
 Skill in Pi 1.0.4 and Codex 0.160.1 automatic-selection context. Merely saying
@@ -41,9 +42,12 @@ An explicit file-read request avoids relying on implicit routing:
 Read ~/.agents/skills/mss/SKILL.md and use MSS to recall: why did we drop the redis cache?
 ```
 
-The user explicitly authorizes recall in this request. Actual model/tool execution
-and the TUI picker remain external acceptance checks, not results of the offline
-prompt probe.
+On 2026-10-09 the same limitation reproduced on 0.160.1: a `$mss` mention in a
+headless `codex exec` prompt did not expand the Skill, while an explicit
+skill-file read executed the full workflow end-to-end (v0.3.0-rc.1). The user
+explicitly authorizes recall in that request. The TUI picker and interactive
+sessions remain external acceptance checks, not results of the offline prompt
+probe.
 
 ## Unknown or older harnesses
 

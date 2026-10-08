@@ -1,16 +1,16 @@
 # Install, update, and remove MSS
 
-**v0.3.0 is an unpublished candidate.** The v0.3.0 release downloads, source
-archive, and pinned Go-install command below become usable only after the tag and
-release are published. main `1db0ab6` passed three-platform CI and native CLI
-smoke; release packaging, signing/notarization, and real-user acceptance are
-separate gates. For candidate testing, build the reviewed checkout locally.
+**v0.3.0 is published.** The v0.3.0 downloads, source archive, and pinned
+Go-install command below are live. Release packaging passed the tag-triggered
+three-platform workflow and native archive validation; archives are still
+unsigned and not notarized, and real-user/interactive acceptance remains a
+separate pending gate. See [release evidence](release-v0.3.0.md).
 
 ## Choose a binary installation method
 
 ### Release archives (macOS, Linux, Windows)
 
-After publication, use the explicit
+Use the explicit
 [v0.3.0 release](https://github.com/henryyu333/mss/releases/tag/v0.3.0), not a
 moving `latest` link. Choose one of the six binary archives:
 
@@ -55,7 +55,7 @@ source. Do not globally disable Gatekeeper or remove quarantine recursively.
 
 ### Pinned Go installation (Go 1.25 or newer)
 
-After the v0.3.0 tag is published:
+From the published v0.3.0 tag:
 
 ```sh
 go install github.com/henryyu333/mss/cmd/mss@v0.3.0
@@ -70,30 +70,33 @@ archives or install any skill automatically.
 Release builds print `mss 0.3.0`; Go's module-version fallback prints
 `mss v0.3.0`. They identify the same tag and carry the same Skill assets.
 
-For the **unpublished candidate**, from the reviewed candidate checkout:
+To build the same tag locally instead of via `go install`:
 
 ```sh
 go build -trimpath -ldflags "-X main.version=0.3.0" -o ./mss ./cmd/mss
 ./mss version
 ```
 
-On Windows use `-o .\mss.exe` and invoke `.\mss.exe`. A stamped local build is
-still a local candidate, not proof that an official release exists.
+On Windows use `-o .\mss.exe` and invoke `.\mss.exe`. A stamped local build
+identifies your checkout; the published release archives and checksums remain
+the official artifacts.
 
-### Homebrew: source Formula migration
+### Homebrew: source-built Formula
 
 The external [henryyu333/homebrew-tap](https://github.com/henryyu333/homebrew-tap)
-migration uses a source-built **v0.2.0** Formula first, because that release's
-source already exists. It does not make v0.3.0 available or add `install-skill`
-to v0.2.0. Consult the tap README and [release evidence](release-v0.3.0.md) for
-publication and tested-environment status.
+ships a source-built Formula; the v0.2.0-era binary Cask is gone. The tap's
+v0.3.0 update is published right after the v0.3.0 release: until `brew update`
+brings it in, `brew install --formula henryyu333/tap/mss` still builds the
+v0.2.0 Formula. After the update, `brew upgrade henryyu333/tap/mss` moves a
+Formula installation to v0.3.0. Tested-environment status is recorded in the
+[release evidence](release-v0.3.0.md).
 
 The old v0.2.0 binary Cask's quarantine-removing hook is removed, not retained
 as a migration mechanism. No Gatekeeper bypass, recursive `xattr`, `--no-quarantine`,
 `--force`, `--overwrite`, or automatic agent installation is needed.
 `sqlite3` and `zstd` remain optional runtime tools.
 
-After the Formula is published, a fresh installation uses:
+A fresh installation uses:
 
 ```sh
 brew install --formula henryyu333/tap/mss
@@ -129,14 +132,13 @@ before changing files. Uninstalling this Cask does not remove MSS caches,
 configuration, installed Skills, or source sessions. A retained old binary can
 be invoked directly during rollback; do not reinstall the old bypassing Cask.
 
-For v0.3.0, release packaging generates a standalone source Formula rather than
-using [GoReleaser's deprecated formula publisher](https://goreleaser.com/customization/publish/homebrew_formulas/).
-Its URL and SHA256 point to `mss_0.3.0_source.tar.gz`, produced by `git archive`
-from the exact release tag. After publication and native validation, a
-maintainer separately replaces the tap Formula with the verified `mss.rb`
-artifact. The release workflow never pushes the tap. Both Skill languages and
-Codex policy are packaged, but installing/upgrading the Formula never installs
-or overwrites a user's Skill.
+Release packaging generates the standalone source Formula rather than using
+[GoReleaser's deprecated formula publisher](https://goreleaser.com/customization/publish/homebrew_formulas/).
+Its URL and SHA256 point to `mss_<version>_source.tar.gz`, produced by
+`git archive` from the exact release tag; a maintainer publishes the verified
+`mss.rb` artifact to the tap separately. The release workflow never pushes the
+tap. Both Skill languages and Codex policy are packaged, but installing or
+upgrading the Formula never installs or overwrites a user's Skill.
 
 ## Optional tools and store roots
 
@@ -327,11 +329,11 @@ reinstallation). It executes binaries only in temporary isolated homes, never
 reads real session stores, and never installs third-party tools.
 
 Only after every CI and archive-validation job succeeds does a separate job
-publish those validated artifacts. The main `1db0ab6` CI is observed green;
-the tag-triggered packaging/archive/publication jobs have not been executed.
-Only the native architecture present on each runner is executed; other
-architectures are cross-built/header-checked, not native-runtime certified.
-Homebrew lifecycle evidence and remaining native validation, interactive host
-acceptance, signing, and notarization gates are recorded in the release document.
-No tap token is used and no Homebrew repository is modified by this
-workflow.
+publish those validated artifacts. This path was exercised end-to-end by the
+v0.3.0-rc.1 prerelease; [release evidence](release-v0.3.0.md) records its
+results and limits. Only the native architecture present on each runner is
+executed; other architectures are cross-built/header-checked, not
+native-runtime certified. Homebrew lifecycle evidence and remaining native
+validation, interactive host acceptance, signing, and notarization gates are
+recorded in the release document. No tap token is used and no Homebrew
+repository is modified by this workflow.

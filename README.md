@@ -11,10 +11,12 @@ IDs, dates, and verbatim quotes. It must distinguish matches, candidates, misses
 and incomplete coverage. It does not create curated memories or inject history
 into every conversation turn.
 
-**v0.3.0 is an unpublished candidate.** The existing public latest release is
-v0.2.0 and does **not** include `install-skill`. main `1db0ab6` passed native
-Ubuntu/macOS/Windows CI; release distribution and notarization remain separate
-gates. See [release evidence](docs/release-v0.3.0.md).
+**v0.3.0 is published** with the explicit `install-skill` command; a
+source-built Homebrew Formula follows the release into the tap. Archives are
+unsigned and not notarized, so macOS may require your security process before
+running a downloaded binary. Interactive-host acceptance by real external
+users is still pending. See [installation](docs/install.md) and
+[release evidence](docs/release-v0.3.0.md).
 
 ## A synthetic demo
 
@@ -33,11 +35,14 @@ For reproducible synthetic performance and retrieval checks, see
 [benchmark methodology](docs/benchmarks.md). These checks do not establish
 superiority over another tool or accuracy on real developer histories.
 
-## Quickstart: reviewed candidate source
+## Quickstart
 
-Requires Go 1.25+. From the reviewed candidate checkout:
+Requires Go 1.25+. Install the published release, or build the same tag from
+source:
 
 ```sh
+go install github.com/henryyu333/mss/cmd/mss@v0.3.0
+# or, from a reviewed checkout of the v0.3.0 tag:
 go build -trimpath -ldflags "-X main.version=0.3.0" -o ./mss ./cmd/mss
 ./mss version
 ./mss doctor
@@ -46,12 +51,14 @@ go build -trimpath -ldflags "-X main.version=0.3.0" -o ./mss ./cmd/mss
 ./mss install-skill claude --language en
 ```
 
-The version should report `mss 0.3.0`; this stamp identifies a local candidate,
-not an official release. On Windows build with `-o .\mss.exe` and invoke
-`.\mss.exe`. Put the reviewed binary in a user-owned PATH directory before
-agent use, and check which binary resolves. Installation embeds version-matched
-assets, needs no network, refuses differing existing files, and never overwrites
-a custom Skill. Choose **one** language and harness explicitly:
+`mss version` reports `mss 0.3.0` (Go's module-version fallback prints
+`mss v0.3.0`). A locally stamped build is a local build; only the published
+release archives and checksums are official. On Windows build with `-o .\mss.exe`
+and invoke `.\mss.exe`. Put the binary in a user-owned PATH directory before
+agent use, and check which binary resolves (`command -v mss` /
+`Get-Command mss`). Installation embeds version-matched assets, needs no
+network, refuses differing existing files, and never overwrites a custom Skill.
+Choose **one** language and harness explicitly:
 
 ```text
 mss install-skill <claude|codex|pi|omp> [--language en|zh-CN]
@@ -60,15 +67,18 @@ mss install-skill <claude|codex|pi|omp> [--language en|zh-CN]
 Codex installation includes `agents/openai.yaml` to disable implicit invocation;
 copying only `SKILL.md` is incomplete. Restart the host after installation.
 Claude uses `/mss <question>`; Pi/OMP use `/skill:mss <question>`; Codex uses the
-Skill picker. Plain non-TUI `$mss` did not expand the Skill in the observed Codex
-probe. Interactive invocation remains unverified in all four hosts. See
-[host evidence and manual controls](docs/skill-compatibility.md), including the
-explicit file-read alternative for hosts without reliable invocation controls.
+Skill picker. On the release candidate, headless real-model runs passed for Pi
+and OMP `/skill:mss` and for an explicit Codex skill-file read; Claude Code is
+pending (no credentials on the release machine) and no TUI session was driven.
+See [host evidence and manual controls](docs/skill-compatibility.md), including
+the explicit file-read alternative for hosts without reliable invocation
+controls.
 
-For future pinned releases, optional `sqlite3`/`zstd`, PATH, update, rollback,
-and uninstall instructions, use [the installation guide](docs/install.md).
-Homebrew migration uses a source-built v0.2.0 Formula; the v0.3.0 Formula still
-requires its published source asset. See the release evidence for tested limits.
+For pinned releases, optional `sqlite3`/`zstd`, PATH, update, rollback, and
+uninstall instructions, use [the installation guide](docs/install.md). Homebrew
+installs a source-built Formula (`brew install --formula henryyu333/tap/mss`);
+the v0.3.0 Formula reaches the tap right after this release, and historical
+v0.2.0 Cask users follow the staged migration in that guide.
 
 ## Commands and result interpretation
 

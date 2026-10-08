@@ -5,12 +5,14 @@ does not. It exists so promotion decisions are made from evidence, not from
 README confidence. The original remediation evidence was measured on 2026-10-08;
 the distribution-preparation evidence below is recorded separately.
 
-**Verified runtime baseline:** main `1db0ab6`. Its three-platform
-[CI run 37793748699](https://github.com/henryyu333/mss/actions/runs/37793748699)
-passed on Ubuntu, macOS, and Windows, including Go regression tests and native
-synthetic CLI smoke. This supersedes the original `633fb76f` baseline and
-remediation-only branch status. v0.3.0 remains unpublished; no v0.3.0 tag or
-Release has been created.
+**Release status:** v0.3.0 is released from the commit this document ships in,
+after the v0.3.0-rc.1 prerelease exercised the complete tag-triggered release
+workflow. The final tag runs the same workflow on this content; the
+published-asset verification and example Homebrew Formula publication are
+appended in a follow-up commit to main. The earlier baselines (`633fb76f`, then
+`1db0ab6` with
+[CI run 37793748699](https://github.com/henryyu333/mss/actions/runs/37793748699))
+remain recorded below.
 
 ## Verified on this machine (macOS 27.0.1, Apple Silicon, Go 1.27.1)
 
@@ -25,8 +27,8 @@ Release has been created.
 | Index compatibility | v0.2.0 public binary's index read by candidate with no rebuild; manifest digest unchanged | PASS |
 | Synthetic benchmark | 64 / 2,000 / 10,000 sessions, four formats; precision 1.0 / recall 1.0 on 13 frozen labels, zero false positives; fault injection PASS | PASS — [benchmarks](benchmarks.md) |
 | Six release targets | `darwin/linux/windows × amd64/arm64` cross-compile with release ldflags; Windows test binaries compile | PASS (compile only) |
-| Release validator | 8 stdlib unit tests; full local rehearsal over a manually packaged six-target bundle of the committed tree: eight artifacts, SHA256, safe paths, six binary headers, native darwin/arm64 version + all four embedded skill installs in both languages | PASS locally (GoReleaser packaging on CI still pending) |
-| Workflow configs | `.goreleaser.yaml`, `ci.yml`, `release.yml` parse as YAML; `1db0ab6` three-OS CI passed; release gated on reusable CI + native archive validation | CI PASS; tag-triggered packaging/publication pending |
+| Release validator | 8 stdlib unit tests; full local rehearsal over a manually packaged six-target bundle of the committed tree: eight artifacts, SHA256, safe paths, six binary headers, native darwin/arm64 version + all four embedded skill installs in both languages | PASS locally; tag-triggered packaging exercised by the RC (below) |
+| Workflow configs | `.goreleaser.yaml`, `ci.yml`, `release.yml` parse as YAML; main `1db0ab6` three-OS CI passed; release gated on reusable CI + native archive validation | CI PASS; tag-triggered packaging/publication exercised by the RC (below) |
 
 ## Distribution preparation (2026-10-08)
 
@@ -43,24 +45,44 @@ deliberately preserved. These are technical checks, not external-human acceptanc
 | Candidate runtime/test | `mss version`, exact search of v0.2.0's index without rebuild (manifest bytes unchanged), `brew test --force`, explicit Codex installer and custom-Skill overwrite refusal | PASS |
 | Formula uninstall | Candidate and retained stable kegs uninstalled separately without force; test tap removed | PASS; source/index/custom Skill unchanged |
 | Existing installation safety | Cask version, `/opt/homebrew/bin/mss` target and binary SHA256 unchanged throughout; no Cask uninstall or prefix relink | PASS for preservation; actual cutover untested |
-| Release artifact compatibility | Same `formula()` generator, source SHA256, Go build, packaged Skill paths and test block; validator's 8 tests pass | PASS locally; actual tag-triggered GoReleaser/release download remains untested |
+| Release artifact compatibility | Same `formula()` generator, source SHA256, Go build, packaged Skill paths and test block; validator's 8 tests pass | PASS locally; tag-triggered packaging/download exercised by the RC (below) |
 
 The external tap migration replaces `Casks/mss.rb` (including its recursive
 quarantine-removal hook) with `Formula/mss.rb` for **published v0.2.0**, not a
 nonexistent v0.3.0 download. Only Go is a build dependency; sqlite3/zstd remain
 optional. The safe staged cutover and retained-binary rollback are documented
-in the tap README and [installation](install.md#homebrew-source-formula-migration).
+in the tap README and [installation](install.md#homebrew-source-built-formula).
 The tap migration passed independent standards/spec review and was pushed to
 [`henryyu333/homebrew-tap` main `dbec7d0`](https://github.com/henryyu333/homebrew-tap/commit/dbec7d0d41f9447b932c316cbb1589b361800aae).
 GitHub's published tree contains `Formula/mss.rb` and no `Casks/mss.rb`.
 The MSS template/docs diff independently passed standards/spec review.
-v0.3.0's generated Formula is published separately only after its source
-Release asset exists.
+The v0.3.0 Formula is published to the tap only after its source Release asset
+exists (see the RC section below).
 
 Homebrew's install diagnostics also reported a user-local `mss` earlier on PATH.
 All lifecycle checks invoked the Formula binary by its full path; users must
 inspect `command -v mss` instead of assuming `brew link` wins PATH precedence.
 
+## Release candidate v0.3.0-rc.1 (2026-10-09)
+
+The prerelease exercised the exact release path before the final tag: CI legs,
+packaging, three-runner archive validation, and publication passed; the one
+failure was infrastructure and the full gate was re-executed rather than
+skipped.
+
+| Check | Observed evidence | Result |
+| --- | --- | --- |
+| Tag & workflow | `v0.3.0-rc.1` on `a0bfda1`; [run 37806317173](https://github.com/henryyu333/mss/actions/runs/37806317173): three `checks` legs, `package`, three `archives` legs, `publish` | PASS (attempt 2) |
+| Infrastructure flake | Attempt 1: `macos-latest` was cancelled after ~15 min with "The job was not acquired by Runner of type hosted" (GitHub-hosted macOS capacity); ubuntu/windows legs passed, downstream jobs skipped | Re-run of the same commit and gates |
+| Prerelease state | GitHub release with `isPrerelease: true`, 10 assets (6 archives + source + `checksums.txt` + `mss.rb`) | PASS |
+| Asset validation | `python3 tools/verify-release.py verify --dist <downloaded> --tag v0.3.0-rc.1` against the `a0bfda1` checkout: eight artifacts, SHA256, safe paths, source/asset/metadata bytes, six binary headers, native darwin/arm64 version, all embedded installs | PASS |
+| Real artifact E2E | Downloaded `mss_0.3.0-rc.1_darwin_arm64.tar.gz` (SHA256 `f5628d11e830e789702c70b602223a087c59ef45961ad601141b96ae8d852714`); binary reports `mss 0.3.0-rc.1`; isolated index/search on synthetic Claude history returned the exact session; `install-skill codex` wrote the rc-stamped skill plus companion policy, identical reinstall succeeded, and a locally modified skill was refused with a non-zero exit | PASS |
+| Homebrew RC Formula | Published `mss.rb` matched the template for the published source SHA256; `brew audit --strict --online` clean; `brew install --build-from-source --skip-link` built the real release asset; `brew test --force` passed; the temporary keg and tap were removed and the machine's v0.2.0 Cask binary was byte-identical before and after | PASS |
+| Host invocation — Pi 1.0.4 | Real model run with the published skill (`--skill`, `/skill:mss`): nonce → `mss index --quiet` → `mss search --sessions --exclude-self …` → `mss show rc-synthetic-s1 …`, then the correct verbatim answer with coverage note; tool-level JSON evidence captured | PASS (headless) |
+| Host invocation — OMP 18.8.0 | Same workflow via `/skill:mss`; the transcript shows the RC skill body (`mss-version: "0.3.0-rc.1"`) injected and the same CLI sequence; correct answer | PASS (headless) |
+| Host invocation — Codex 0.160.1 | Non-TUI `$mss` still does not auto-expand (upstream #40600); the model explicitly read `.agents/skills/mss/SKILL.md` (RC) and executed the same workflow end-to-end | PASS (explicit skill-file path, headless) |
+| Host invocation — Claude Code 2.1.284 | This machine's automation context has no Claude Code credentials (no credentials file, no keychain item; the CLI reports "Not logged in"), so no model invocation was possible | PENDING |
+| TUI sessions | None of the four hosts was driven through its TUI picker or slash command | PENDING [first-user checklist](first-user-checklist.md) |
 
 ## Fixed during this remediation
 
@@ -83,11 +105,11 @@ inspect `command -v mss` instead of assuming `brew link` wins PATH precedence.
 
 | Gate | Why it is open | Who unblocks |
 | --- | --- | --- |
-| GoReleaser packaging | Not installed locally; rehearsal used equivalent manual packaging | CI `release` workflow on the tag |
-| Homebrew native coverage and cutover | macOS arm64 source lifecycle passed; Linux Homebrew, Intel macOS and actual Cask uninstall/link were not exercised (existing Cask preservation was requested) | Native hosts and a separately approved real cutover |
-| Published v0.3.0 Formula | No v0.3.0 tag/source Release asset; local fixture substituted only the download URL, so public fetch/online audit and real `brew upgrade` after cutover are not proven | Publish and verify Release first, then validate/publish its exact `mss.rb` in the tap |
+| GoReleaser packaging | **Closed:** v0.3.0-rc.1 was packaged on CI, validated on three native runners, and published; the final tag runs the same workflow | — |
+| Homebrew native coverage and cutover | macOS arm64 source lifecycle passed (stable, candidate, and RC); Linux Homebrew, Intel macOS, and the actual Cask uninstall/link were not exercised because the existing installation was deliberately preserved | Native hosts and a separately approved real cutover |
+| Published v0.3.0 Formula | The RC Formula was audited, installed from the real asset, and tested; the tap still carries the v0.2.0 Formula until the post-release update | Final Release asset, then the tap update |
 | Signing / notarization | No certificate or signing pipeline configured | Maintainer; until then checksums are integrity-only |
-| Interactive host invocation | Offline probes cannot exercise TUI pickers or model behavior | First-user checklist, one human per host |
+| Interactive host invocation | Headless real-model invocations passed for Pi, OMP, and Codex (explicit skill-file path); Claude Code is PENDING (no credentials in this context); TUI sessions were not driven | First-user checklist, one human per host |
 | External user acceptance | No external user has run this build | [first-user checklist](first-user-checklist.md) |
 | Real-history retrieval quality | Synthetic corpus is not real developer history | Optional real-corpus evaluation, separately scoped |
 
@@ -114,8 +136,10 @@ maintenance items and were deliberately left out of the v0.3.0 scope:
 
 ## Promotion verdict
 
-Distribution preparation has local technical evidence, not release authorization.
-The observed three-platform main CI does not substitute for checks on the eventual
-tag commit. Do not claim signed distribution, every native architecture, actual
-Cask cutover, or interactive/external-user acceptance until those gates close.
-No v0.3.0 tag or Release is created by this preparation stage.
+v0.3.0 is released after the RC exercised the full tag-triggered pipeline,
+local asset validation, Homebrew lifecycle checks, and headless host
+invocations; the final tag runs the same workflow, and the published-asset
+verification plus the tap update are appended in a follow-up commit. Remaining
+gates are signed/notarized distribution, TUI and external-human acceptance,
+non-native Homebrew hosts, and real-history retrieval quality. No claim beyond
+this evidence is made.

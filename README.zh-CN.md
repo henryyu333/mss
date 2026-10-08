@@ -6,7 +6,7 @@
 
 MSS 为本机已有、格式受支持的会话记录建立索引。你可以直接用 CLI 搜索，也可以明确要求 Agent 执行随附的 Skill。Skill 搜索并读取相关会话，再根据证据总结，附上会话 ID、日期和逐字引用。它必须区分命中、候选、未找到和覆盖不完整，不维护整理后的“记忆”，也不在每轮对话中注入历史。
 
-**v0.3.0 尚未发布，目前是候选版本。** 公开的最新版本仍是 v0.2.0，**没有** `install-skill` 命令。main `1db0ab6` 的 Ubuntu/macOS/Windows 原生 CI 已全部通过；发布分发和公证仍是独立门槛。详见[发布证据](docs/release-v0.3.0.md)。
+**v0.3.0 已发布**，新增显式 `install-skill` 命令；源码构建的 Homebrew Formula 会在发布后随即进入 tap。归档未签名、未经公证，macOS 可能按你的安全流程阻止下载的二进制；真实外部用户的交互式宿主验收仍待完成。详见[安装指南](docs/install.md)与[发布证据](docs/release-v0.3.0.md)。
 
 ## 虚构数据演示
 
@@ -22,11 +22,13 @@ mss show 7f3a9c21 --around 3 --brief --no-refresh
 
 可复现的合成性能与检索检查见[基准方法](docs/benchmarks.md)。这些检查不证明 MSS 优于其他工具，也不代表真实开发历史上的准确率。
 
-## 快速开始：从审核过的候选源码构建
+## 快速开始
 
-需要 Go 1.25 或更新版本。在审核过的候选源码目录中运行：
+需要 Go 1.25 或更新版本。安装已发布的版本，或从同一标签构建源码：
 
 ```sh
+go install github.com/henryyu333/mss/cmd/mss@v0.3.0
+# 或者，在审核过的 v0.3.0 标签检出中：
 go build -trimpath -ldflags "-X main.version=0.3.0" -o ./mss ./cmd/mss
 ./mss version
 ./mss doctor
@@ -35,15 +37,15 @@ go build -trimpath -ldflags "-X main.version=0.3.0" -o ./mss ./cmd/mss
 ./mss install-skill claude --language zh-CN
 ```
 
-版本应显示 `mss 0.3.0`；手动写入版本号仍只是本地候选构建，不证明正式发布存在。Windows 构建使用 `-o .\mss.exe`，调用使用 `.\mss.exe`。让 Agent 使用前，将审核过的二进制放入用户拥有的 PATH 目录，并确认实际解析到哪个文件。安装命令使用二进制内嵌、版本匹配的资源，不需要联网；遇到内容不同的现有文件会拒绝安装，不覆盖自定义 Skill。明确选择**一个**语言和宿主：
+`mss version` 显示 `mss 0.3.0`（Go 模块版本回退显示 `mss v0.3.0`）。手动写入版本号的构建只是本地构建；只有正式发布的归档与校验和才是官方产物。Windows 构建使用 `-o .\mss.exe`，调用使用 `.\mss.exe`。让 Agent 使用前，将二进制放入用户拥有的 PATH 目录，并确认实际解析到哪个文件（`command -v mss` / `Get-Command mss`）。安装命令使用二进制内嵌、版本匹配的资源，不需要联网；遇到内容不同的现有文件会拒绝安装，不覆盖自定义 Skill。明确选择**一个**语言和宿主：
 
 ```text
 mss install-skill <claude|codex|pi|omp> [--language en|zh-CN]
 ```
 
-Codex 安装包含禁止隐式调用的 `agents/openai.yaml`；只复制 `SKILL.md` 不算完整安装。安装后重启宿主。Claude 使用 `/mss <问题>`，Pi/OMP 使用 `/skill:mss <问题>`，Codex 使用 Skill 选择器。已观察的 Codex 探测中，非 TUI 的普通 `$mss` 消息没有展开 Skill。四个宿主的交互调用都尚未验证。详见[宿主证据与手动控制](docs/skill-compatibility.md)，其中也说明了无法可靠控制调用时，如何明确要求读取指定 Skill 文件。
+Codex 安装包含禁止隐式调用的 `agents/openai.yaml`；只复制 `SKILL.md` 不算完整安装。安装后重启宿主。Claude 使用 `/mss <问题>`，Pi/OMP 使用 `/skill:mss <问题>`，Codex 使用 Skill 选择器。RC 实测：Pi 与 OMP 的 `/skill:mss`、Codex 显式读取 Skill 文件均在真实模型中完成端到端召回；Claude Code 因本机自动化环境无凭据而未验证（PENDING）；TUI 交互仍未验证。详见[宿主证据与手动控制](docs/skill-compatibility.md)，其中也说明了无法可靠控制调用时，如何明确要求读取指定 Skill 文件。
 
-未来固定版本的安装、可选 `sqlite3`/`zstd`、PATH、更新、回滚和卸载步骤见[安装指南](docs/install.md)。Homebrew 迁移使用源码构建的 v0.2.0 Formula；v0.3.0 Formula 仍依赖正式发布的源码资产，已验证范围见发布证据。
+固定版本的安装、可选 `sqlite3`/`zstd`、PATH、更新、回滚和卸载步骤见[安装指南](docs/install.md)。Homebrew 安装源码构建的 Formula（`brew install --formula henryyu333/tap/mss`）；v0.3.0 Formula 会在本次发布后随即进入 tap，历史 v0.2.0 Cask 用户按该指南的分阶段迁移操作。
 
 ## 命令与结果判断
 

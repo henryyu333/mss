@@ -8,11 +8,12 @@ do not send private sessions or credentials to a model provider or issue tracker
 
 Use [installation](install.md), [host evidence](skill-compatibility.md), and
 [synthetic benchmark methodology](benchmarks.md) as the reproducible references.
-v0.3.0 is an unpublished candidate; do not expect its release URLs or Formula
-artifact to exist yet. main `1db0ab6` passed native Ubuntu/macOS/Windows CI
-([run 37793748699](https://github.com/henryyu333/mss/actions/runs/37793748699)).
-CI is technical evidence, not external-human acceptance. Homebrew distribution
-evidence and remaining gates are recorded in [release gates](release-v0.3.0.md).
+v0.3.0 is published; its release URLs and the release-attached Formula artifact
+now exist, with the tap update following the release. The checklist below is
+still **unexecuted by a real external human**: RC-stage headless model
+invocations (Pi, OMP, Codex; Claude Code had no credentials on the release
+machine) are recorded in [release gates](release-v0.3.0.md), but they do not
+replace TUI sessions and independent first-user acceptance.
 
 ## Record the environment before starting
 
@@ -23,7 +24,7 @@ evidence and remaining gates are recorded in [release gates](release-v0.3.0.md).
 - [ ] For Homebrew, record whether MSS is a Formula or historical Cask, and
   invoke the installed Formula by full path when checking it; an older user-local
   `mss` can precede Homebrew on PATH. Follow the staged migration in
-  [installation](install.md#homebrew-source-formula-migration), without retiring
+  [installation](install.md#homebrew-source-built-formula), without retiring
   the Cask before the replacement's build/test succeeds. Stable v0.2.0 lacks
   `install-skill`; it is not a v0.3.0 host-acceptance build.
 - [ ] Record the agent's exact version, selected Skill language, actual Skill
