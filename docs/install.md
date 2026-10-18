@@ -85,12 +85,11 @@ the official artifacts.
 ### Homebrew: source-built Formula
 
 The external [henryyu333/homebrew-tap](https://github.com/henryyu333/homebrew-tap)
-now ships the source-built v0.3.1 Formula, published verbatim from the release
-pipeline; the v0.2.0-era binary Cask is gone. The tap's v0.3.2 update is
-published separately after the GitHub release assets exist. A fresh
+now ships the source-built v0.3.2 Formula, published verbatim from the release
+pipeline; the v0.2.0-era binary Cask is gone. A fresh
 `brew install --formula henryyu333/tap/mss` builds it, and
 `brew upgrade henryyu333/tap/mss` moves a Formula installation forward.
-The [tap update](https://github.com/henryyu333/homebrew-tap/commit/8535d53db1c2d0ac2496614ab94a24c77a7d94b6)
+The [tap update](https://github.com/henryyu333/homebrew-tap/commit/efd52d17e23023b719929e2b32f39e20215defb4)
 passed strict online audit, native macOS arm64 source build, the Formula test,
 and isolated retrieval/recovery smoke checks. The existing Cask was preserved;
 historical platform limits remain in the [release evidence](release-v0.3.0.md).
