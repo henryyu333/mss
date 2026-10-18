@@ -5,36 +5,6 @@ import (
 	"testing"
 )
 
-// The PreToolUse warning asks by command shape: a run that failed before is
-// found under another spelling of the same command, one that passed is not,
-// and the trust policy can hide a project's failures.
-func TestCommandFailedBeforeFindsTheShapeThatFailed(t *testing.T) {
-	c, tmp := newCFStore(t)
-	for i := 0; i < 4; i++ {
-		c.write("app", i, "fix the store test")
-	}
-	dir := filepath.Join(tmp, "index.db")
-	if err := Ensure(dir, "", true, nil); err != nil {
-		t.Fatal(err)
-	}
-	f, ok := CommandFailedBefore(dir, "  go test ./...  ", nil)
-	if !ok {
-		t.Fatalf("a command that failed in every session is not on file: %+v", ReadCommandFails(dir))
-	}
-	if f.Head != CommandHead("go test ./...") || f.Sessions < 2 || f.Line == "" {
-		t.Errorf("failure on file = %+v", f)
-	}
-	if _, ok := CommandFailedBefore(dir, "go build ./...", nil); ok {
-		t.Error("a command that always passed reads as failed before")
-	}
-	if _, ok := CommandFailedBefore(dir, "cd", nil); ok {
-		t.Error("a command with no shape matched a failure")
-	}
-	if _, ok := CommandFailedBefore(dir, "go test ./...", func(string) bool { return false }); ok {
-		t.Error("a failure from a project the policy hides was handed back")
-	}
-}
-
 // `mss index` says whether there was anything to do: true right after a
 // build, false once a transcript grew, and false for a store that is not there.
 func TestUpToDateFollowsTheTranscripts(t *testing.T) {

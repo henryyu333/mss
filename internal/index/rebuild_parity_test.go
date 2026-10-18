@@ -87,8 +87,8 @@ func paritySQL(t *testing.T, db, stmts string) {
 	}
 }
 
-// paritySnapshot is what a reader can see of an index: each session's row
-// and records, and the two command tables.
+// paritySnapshot is what a reader can see of an index: each session's row,
+// records, and the command table.
 func paritySnapshot(t *testing.T, dir string) map[string]string {
 	t.Helper()
 	metas, err := AllMeta(dir)
@@ -114,8 +114,6 @@ func paritySnapshot(t *testing.T, dir string) map[string]string {
 		out[s.Harness+":"+s.ID] += "\n    " + strings.Join(msgs, "\n    ")
 	}
 	out["commands"] = fmt.Sprint(ReadCommands(dir))
-	out["fails"] = fmt.Sprint(ReadCommandFails(dir))
-	out["facts"] = fmt.Sprint(ReadSessionFacts(dir))
 	return out
 }
 

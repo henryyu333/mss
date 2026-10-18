@@ -58,7 +58,4 @@ func TestRemovingOneCopyOfASharedIDKeepsWhatTheOtherHolds(t *testing.T) {
 	if gotPath != wantPath || !reflect.DeepEqual(got, want) {
 		t.Errorf("after the update: path %s, records %v\na full build:      path %s, records %v", gotPath, got, wantPath, want)
 	}
-	if a, b := ReadCommandFails(dir), ReadCommandFails(fresh); !reflect.DeepEqual(a, b) {
-		t.Errorf("failure table after the update\n%+v\nfull build\n%+v", a, b)
-	}
 }

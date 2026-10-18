@@ -57,9 +57,11 @@ Files:
   redaction counters, session metadata, ordinals, build time and search scope.
   Some upstream provenance/import fields remain for on-disk compatibility;
   MSS does not expose sync, handoff or memory-curation commands.
-- Derived caches may include `cooccur.gob`, `fixes.gob`, `commands.gob`,
-  `commandfails.gob`, `commandfails-state.gob` and `sessionfacts.gob`. Their
-  writers run during explicit indexing; small corpora need not produce each file.
+- Derived caches may include `cooccur.gob` and `commands.gob`. Their writers run
+  during explicit indexing; small corpora need not produce each file. An index
+  written by an older release can still carry `fixes.gob`, `commandfails.gob`,
+  `commandfails-state.gob` or `sessionfacts.gob`; this build has no reader for
+  them and removes them on the next index pass.
 
 ### Roles
 

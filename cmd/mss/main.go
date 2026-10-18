@@ -313,6 +313,10 @@ func cmdIndex(dir string, rest []string) error {
 	// longest part of the whole command, and it ran before the progress sink
 	// existed (#1021).
 	index.SweepStaleTmp(dir)
+	// An up-to-date index returns below without entering the builder, so the
+	// sidecars older releases left behind would otherwise survive every
+	// explicit index pass.
+	index.RemoveObsoleteSidecars(dir)
 	fresh, n := index.UpToDate(dir, "")
 	if fresh && !force {
 		fmt.Fprintf(said, "mss: index is up to date (%d session%s)\n", n, pluralS(n))

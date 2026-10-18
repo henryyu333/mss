@@ -591,8 +591,8 @@ func PromotedNoteMetas(dir string, allow func(project string) bool) []SessionMet
 	return out
 }
 
-// FrictionSessions counts the sessions that hit one wall, by the signature a
-// FixPair carries. The manifest already holds every session's hashes and is
+// FrictionSessions counts the sessions that hit one wall, by its signature.
+// The manifest already holds every session's hashes and is
 // cached, so a caller in a hook pays a map walk rather than a read — which is
 // what lets the line that arrives at the moment of a failure say how often this
 // machine has been here (#2491).

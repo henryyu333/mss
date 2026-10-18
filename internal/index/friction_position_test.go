@@ -3,9 +3,6 @@ package index
 import (
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/henryyu333/mss/internal/model"
 )
 
 // Adding an import moves every error in the file down a line. Keyed by that
@@ -39,28 +36,5 @@ func TestACompilerErrorIsOneWallWhereverTheLineMoves(t *testing.T) {
 	elsewhere, _ := FrictionLine("./cmd/run.go:4:2: undefined: glimwraxHelper")
 	if frictionHash(at4) == frictionHash(elsewhere) {
 		t.Error("the same symbol in two files was folded into one wall")
-	}
-}
-
-// And the pair survives it: the command that settled the error at one line is
-// offered when the same error comes back further down the file.
-func TestAFixPairSurvivesTheLineMoving(t *testing.T) {
-	now := time.Now()
-	ms := []model.Message{
-		{Role: "command", Text: "go build ./...", Time: now},
-		{Role: "tool-output", Text: "./main.go:4:2: undefined: glimwraxHelper", Time: now},
-		{Role: "command", Text: "glimwraxctl --sync && go build ./...", Time: now.Add(time.Minute)},
-		{Role: "tool-output", Text: "ok", Time: now.Add(2 * time.Minute)},
-	}
-	pairs := fixPairsIn(ms, "claude:s1", "p")
-	if len(pairs) != 1 {
-		t.Fatalf("want one pair, got %d", len(pairs))
-	}
-	line, ok := FrictionLine("./main.go:9:2: undefined: glimwraxHelper")
-	if !ok {
-		t.Fatal("the moved error is not friction")
-	}
-	if pairs[0].Sig != frictionHash(line) {
-		t.Error("the repair is filed under a signature the same error one line down does not reach")
 	}
 }

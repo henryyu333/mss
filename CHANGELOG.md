@@ -6,6 +6,13 @@ All notable changes to mss are recorded here. The format follows
 
 ## [Unreleased]
 
+### Removed
+
+- The `fixes.gob`, `commandfails.gob`, `commandfails-state.gob` and
+  `sessionfacts.gob` sidecars, with their miners and readers. No current
+  command reads them; they were rebuilt on every index pass. Existing indexes
+  keep the files until the next `mss index`, which removes them.
+
 ## [0.3.0] - 2026-10-09
 
 ### Added

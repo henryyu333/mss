@@ -161,15 +161,15 @@ func TestTheSidecarsAreAPhaseOfTheirOwn(t *testing.T) {
 	if err := Ensure(filepath.Join(tmp, "index.db"), "", true, nil); err != nil {
 		t.Fatal(err)
 	}
-	const phase = "mining fixes and commands"
-	if total := rec.totals[phase]; total != 5 {
+	const phase = "mining commands and co-occurrence"
+	if total := rec.totals[phase]; total != 2 {
 		t.Fatalf("%q reports %d units, want one per builder", phase, total)
 	}
 	sum := 0
 	for _, n := range rec.advances(phase) {
 		sum += n
 	}
-	if sum != 5 {
-		t.Errorf("%q advanced %d of 5 — a builder reports nothing", phase, sum)
+	if sum != 2 {
+		t.Errorf("%q advanced %d of 2 — a builder reports nothing", phase, sum)
 	}
 }

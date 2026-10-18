@@ -329,6 +329,7 @@ func Ensure(dir string, harness string, force bool, progress io.Writer) error {
 		force = true
 	}
 	if !force && err == nil && manifestFresh(m, want, scope) && recordsIntact(dir, m) {
+		removeObsoleteSidecarsLocked(dir)
 		return nil
 	}
 	return updateIndex(dir, harness, scope, want, force, progress)
@@ -604,23 +605,14 @@ func rebuildDead(dir string, harness string, scope string, files map[string]File
 		return err
 	}
 	dropEmptySessions(&m, wrote)
-	// The five sidecars walk every session again — what co-occurs, which
-	// command followed which error, what was run and what failed. On a real
-	// store that is eight seconds of a twenty-second build, and it used to run
-	// under the previous phase's last percentage, so the bar sat still through
-	// it (#3372).
-	reportPhase("mining fixes and commands", 5)
-	// Five passes over the same sessions, each writing its own file and reading
-	// nothing the others write, so they run together rather than one after the
-	// other. Profiled on a real store, they were 9.4 s (fixes) and 6.0 s
-	// (co-occurrence) of a 51 s build, with the whole machine idle beside them.
+	// The two sidecars walk every session again — what co-occurs and what was
+	// run. Each writes its own file and reads nothing the other writes, so they
+	// run together rather than one after the other (#3372).
+	reportPhase("mining commands and co-occurrence", 2)
 	var sidecars sync.WaitGroup
 	for _, build := range []func(){
 		func() { buildCooccur(tmp, ss) },
-		func() { buildFixes(tmp, ss, func(s model.Session) string { return s.Harness + ":" + s.ID }) },
 		func() { buildCommands(tmp, ss) },
-		func() { buildCommandFails(tmp, ss) },
-		func() { buildSessionFacts(tmp, ss) },
 	} {
 		sidecars.Add(1)
 		go func() {
@@ -1463,10 +1455,9 @@ func writeSessionsWithSync(tmp, dir string, ss []model.Session, files map[string
 		return err
 	}
 	// Redact in place before anything reads the sessions, so the record log,
-	// the sidecars (cooccur, fixes, commands) and the per-session metadata all
-	// see the same scrubbed text. Doing it per-message into the record only — as
-	// this path used to — left ss raw, and buildFixes/buildCommands/buildCooccur
-	// then mined
+	// the sidecars (cooccur, commands) and the per-session metadata all see the
+	// same scrubbed text. Doing it per-message into the record only — as this
+	// path used to — left ss raw, and buildCommands/buildCooccur then mined
 	// secrets straight out of the unredacted commands.
 	clipped := preRedactSessions(&m, ss)
 	seenMsgs := msgSeen{}
@@ -1579,21 +1570,14 @@ func writeSessionsWithSync(tmp, dir string, ss []model.Session, files map[string
 	if len(ss) >= cooccurMinDF && len(ss) <= cooccurMaxSessions {
 		preRedactSessions(nil, ss)
 	}
-	// The sidecars walk every session again — what co-occurs, which command
-	// followed which error, what was run and what failed, and what each session
-	// touched and ran. On a real store that is eight seconds of a twenty-second
-	// build, and it used to run under the previous phase's last percentage, so
-	// the bar sat still through it (#3372).
-	reportPhase("mining fixes and commands", 5)
+	// The sidecars walk every session again — what co-occurs and what was run.
+	// On a real store that is seconds of a build, and it used to run under the
+	// previous phase's last percentage, so the bar sat still through it
+	// (#3372).
+	reportPhase("mining commands and co-occurrence", 2)
 	buildCooccur(tmp, ss)
 	reportAdvance(1)
-	buildFixes(tmp, ss, func(s model.Session) string { return s.Harness + ":" + s.ID })
-	reportAdvance(1)
 	buildCommands(tmp, ss)
-	reportAdvance(1)
-	buildCommandFails(tmp, ss)
-	reportAdvance(1)
-	buildSessionFacts(tmp, ss)
 	reportAdvance(1)
 	reportPhase("writing index", sp.bucketCount())
 	if err := sp.writeBuckets(filepath.Join(tmp, "buckets")); err != nil {
@@ -3901,10 +3885,9 @@ func updateIndex(dir, harness, scope string, files map[string]FileState, force b
 	// Scrub once, up front, the way both full builds do — everything below reads
 	// these sessions. Redacting per message inside the record loop instead left
 	// the sessions themselves raw, so whatever was mined from them afterwards
-	// was raw too: a credential in an error line reached fixes.gob whole while a
-	// rebuild of the same corpus produced a clean one. It also left
-	// metaForSession hashing unredacted text, so the friction signatures a
-	// session carried depended on which build path had touched it last.
+	// was raw too. It also left metaForSession hashing unredacted text, so the
+	// friction signatures a session carried depended on which build path had
+	// touched it last.
 	clipped := preRedactSessions(&m, replacements)
 	buckets := bucketPostings{}
 	// positions counts every record written for a key — carried and new
@@ -3952,7 +3935,6 @@ func updateIndex(dir, harness, scope string, files map[string]FileState, force b
 	// pass and a search could find its own answer again.
 	carryGates := map[string]*mssEchoGate{}
 	// has to read again along with the ones re-read (#4288).
-	dropped := map[string]bool{}
 	if err := eachRecord(filepath.Join(dir, "records.bin"), tablesFromManifest(old), func(r Record) {
 		if recErr != nil {
 			return
@@ -3975,12 +3957,10 @@ func updateIndex(dir, harness, scope string, files map[string]FileState, force b
 		// watermark hands back the new turns alone, so dropping the rest by key
 		// would take the earlier turns of every continued session (#2033).
 		if removed[r.SourcePath] || (changed[r.SourcePath].Path != "" && !fromStore && !leftItsFile(r, replaceKeys, old.Sessions[r.Key], aiderHeld)) || (fromStore && readWholeThisPass(r) && storeKeys[r.Key]) {
-			dropped[r.Key] = true
 			return
 		}
 		if r.SourcePath == "" {
-			dropped[r.Key] = true // addRec does not carry it
-			return
+			return // addRec does not carry it
 		}
 		// Only records that are emitted again consume the gate: the replay
 		// walks what is stored, so a record this pass drops must not advance
@@ -4095,17 +4075,9 @@ func updateIndex(dir, harness, scope string, files map[string]FileState, force b
 		return err
 	}
 	carrySidecars(dir, tmp)
-	// After carrying, not instead of it: the fixes merge writes only when it
-	// has something to say, and the carried file is what a quiet update leaves.
 	// The command table is recomputed whole, and an empty one removes the
 	// carried file, as a full build would not write it (#4441).
-	mergeFixes(dir, tmp, replacements, replaceKeys)
 	buildCommandsFromIndex(tmp)
-	for key := range replaceKeys {
-		dropped[key] = true
-	}
-	buildCommandFailsFromIndex(tmp, carriedCommandFailState(dir, old, tmp, m.Generation, dropped), dropped)
-	buildSessionFactsFromIndex(tmp)
 	return swapIndexDir(dir, tmp)
 }
 
@@ -4113,23 +4085,53 @@ func updateIndex(dir, harness, scope string, files map[string]FileState, force b
 // incremental build, because the swap replaces the whole directory and this
 // path does not mine them again — it deliberately never holds the whole corpus.
 //
-// Without this, one incremental update deleted all three. `fix` went silent
-// outright, since it has no other source; ranking lost its query expansion;
-// commands survived only because they have a fallback path. And an incremental
-// update is not a rare event — it is what a new session in any store triggers,
-// so the sidecars were being destroyed during ordinary use and only came back
-// on the next full rebuild.
+// Without this, one incremental update deleted both, and an incremental update
+// is not a rare event: it is what a new session in any store triggers.
 //
-// They are carried, not rebuilt: pairs mined from sessions that arrived in this
-// update are missing until a full build, which is the ordinary staleness of a
+// They are carried, not rebuilt: data mined from sessions that arrived in this
+// update is missing until a full build, which is the ordinary staleness of a
 // derived file and not the same thing as having none.
 func carrySidecars(dir, tmp string) {
-	for _, name := range []string{fixesFile, commandsFile, cooccurFile} {
+	for _, name := range []string{commandsFile, cooccurFile} {
 		b, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			continue
 		}
 		_ = os.WriteFile(filepath.Join(tmp, name), b, 0o600)
+	}
+}
+
+// obsoleteSidecars were derived by older builds and have no reader in this
+// one. A rebuild replaces the directory, but an append does not, and a fresh
+// index can sit unchanged for a long time; clean them so the removed miners
+// actually save the space they were costing.
+var obsoleteSidecars = []string{
+	"fixes.gob",
+	"commandfails.gob",
+	"commandfails-state.gob",
+	"sessionfacts.gob",
+}
+
+// RemoveObsoleteSidecars removes derived files this build no longer reads.
+// It is best-effort: a read-only index is still answerable, and failing an
+// explicit index pass over a leftover cache file would be worse than leaving it.
+func RemoveObsoleteSidecars(dir string) {
+	if dir == "" {
+		dir = DefaultDir()
+	}
+	unlock, err := lockDir(dir)
+	if err != nil {
+		return
+	}
+	defer unlock()
+	removeObsoleteSidecarsLocked(dir)
+}
+
+// removeObsoleteSidecarsLocked is the body for callers that already hold the
+// index lock.
+func removeObsoleteSidecarsLocked(dir string) {
+	for _, name := range obsoleteSidecars {
+		_ = os.Remove(filepath.Join(dir, name))
 	}
 }
 
@@ -4581,25 +4583,14 @@ func appendIncremental(dir, harness, scope string, old Manifest, files map[strin
 	if err := writeManifest(dir, m); err != nil {
 		return filesTouched, messages, unreadable, err
 	}
-	// The sidecars, from what this pass read and from the records already on
-	// file. The replacement path does the same three things after it carries
-	// them over; this path used to do none of them, which was survivable while
-	// it only ever saw a tail and is not once a new conversation comes through
-	// here (#3500). No `replaced` set: nothing was re-read, so every pair
-	// already on file is still earned — the new ones merge in beside them, and
-	// a candidate on file is what a second sighting needs to be promoted.
-	mergeFixes(dir, dir, appended, map[string]bool{})
-	// The two command tables are mined from every record the index holds, which
-	// is a scan of records.bin — 2.9s of an 8.6s pass on a 191 MB store. Nothing
-	// this pass added can change them unless it added a command or the output of
-	// one, and most appends are speech, so ask first.
+	// The command table is mined from every record the index holds, which is a
+	// scan of records.bin — 2.9s of an 8.6s pass on a 191 MB store. Nothing
+	// this pass added can change it unless it added a command, and most
+	// appends are speech, so ask first.
 	if carriesWork(appended) {
 		buildCommandsFromIndex(dir)
-		// From the state the last update left: only the records this pass
-		// appended are read (#4288).
-		buildCommandFailsFromIndex(dir, readCommandFailState(dir), nil)
-		buildSessionFactsFromIndex(dir)
 	}
+	removeObsoleteSidecarsLocked(dir)
 	return filesTouched, messages, unreadable, nil
 }
 
