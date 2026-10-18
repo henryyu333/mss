@@ -8,6 +8,56 @@ import (
 	search "github.com/henryyu333/mss/internal/query"
 )
 
+// A session arriving through the append path must get a nonzero ordinal, and
+// must not receive one already held by an older row. The full-build test above
+// goes through replacement because its existing files grow; this covers the
+// new-file path separately.
+func TestAppendGivesANewSessionANonzeroUniqueOrd(t *testing.T) {
+	tmp := t.TempDir()
+	claudeRoot := filepath.Join(tmp, "claude")
+	t.Setenv("MSS_CLAUDE_ROOT", claudeRoot)
+	dir := filepath.Join(tmp, "index.db")
+	t.Setenv("MSS_INDEX_DIR", dir)
+	proj := filepath.Join(claudeRoot, "-tmp-app")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(file, id, text string) {
+		line := `{"type":"user","sessionId":"` + id + `","timestamp":"2026-01-02T03:04:05Z","message":{"role":"user","content":"` + text + `"}}` + "\n"
+		if err := os.WriteFile(filepath.Join(proj, file), []byte(line), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("s1.jsonl", "s1", "alpha original content")
+	if err := Ensure(dir, "", true, nil); err != nil {
+		t.Fatal(err)
+	}
+	write("s2.jsonl", "s2", "bravo append marker")
+	if err := Ensure(dir, "", false, nil); err != nil {
+		t.Fatal(err)
+	}
+	assertOrdsUnique(t, dir)
+	m, err := readManifest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Sessions) != 2 {
+		t.Fatalf("append kept %d sessions, want 2", len(m.Sessions))
+	}
+	for key, meta := range m.Sessions {
+		if meta.Ord == 0 {
+			t.Errorf("session %q has ordinal 0 after append", key)
+		}
+	}
+	got, err := Search(dir, search.Options{Query: "bravo", All: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "s2" {
+		t.Fatalf("the appended session is not findable by its own words: %+v", got)
+	}
+}
+
 func assertOrdsUnique(t *testing.T, dir string) {
 	t.Helper()
 	m, err := readManifest(dir)

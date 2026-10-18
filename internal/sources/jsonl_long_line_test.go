@@ -15,8 +15,9 @@ func TestJSONLReadersGrowPastTheInitialBuffer(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "long.jsonl")
 	long := strings.Repeat("长", 30000)
+	longHeader := strings.Repeat("头", 30000)
 	records := []map[string]any{
-		{"type": "session", "id": "s1"},
+		{"type": "session", "id": "s1", "text": longHeader},
 		{"type": "message", "text": long},
 		{"type": "message", "text": "after"},
 	}
@@ -35,6 +36,9 @@ func TestJSONLReadersGrowPastTheInitialBuffer(t *testing.T) {
 
 	var texts []string
 	if err := scanJSONLFromOffset(path, 0, func(m map[string]any) {
+		if typ, _ := m["type"].(string); typ != "message" {
+			return
+		}
 		if text, ok := m["text"].(string); ok {
 			texts = append(texts, text)
 		}
