@@ -8,6 +8,21 @@ import (
 	search "github.com/henryyu333/mss/internal/query"
 )
 
+func assertOrdsUnique(t *testing.T, dir string) {
+	t.Helper()
+	m, err := readManifest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byOrd := map[uint32]string{}
+	for key, meta := range m.Sessions {
+		if other, dup := byOrd[meta.Ord]; dup {
+			t.Fatalf("sessions %q and %q share Ord %d — their postings are merged", other, key, meta.Ord)
+		}
+		byOrd[meta.Ord] = key
+	}
+}
+
 // Ord is the posting's session id. A new session takes max(Ord)+1 over the
 // manifest being built, but a re-parsed session takes its Ord from the OLD
 // manifest — which the new map has not seen yet. When every existing file
@@ -35,6 +50,7 @@ func TestOrdsStayUniqueWhenEveryFileChangesAtOnce(t *testing.T) {
 	if err := Ensure(dir, "", true, nil); err != nil {
 		t.Fatal(err)
 	}
+	assertOrdsUnique(t, dir)
 
 	// Every existing file grows, and a new session appears whose file sorts
 	// ahead of them — so it is assigned an Ord before the old ones reclaim
@@ -46,17 +62,7 @@ func TestOrdsStayUniqueWhenEveryFileChangesAtOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m, err := readManifest(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	byOrd := map[uint32]string{}
-	for key, meta := range m.Sessions {
-		if other, dup := byOrd[meta.Ord]; dup {
-			t.Fatalf("sessions %q and %q share Ord %d — their postings are merged", other, key, meta.Ord)
-		}
-		byOrd[meta.Ord] = key
-	}
+	assertOrdsUnique(t, dir)
 	// And the behavior that Ord uniqueness protects: each session is findable
 	// by the marker only it contains.
 	for _, c := range []struct{ marker, id string }{

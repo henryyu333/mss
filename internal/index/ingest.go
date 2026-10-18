@@ -511,6 +511,7 @@ func rebuildDead(dir string, harness string, scope string, files map[string]File
 		return err
 	}
 	defer sp.cleanup()
+	nextOrd := nextSessionOrd(m.Sessions)
 	err = sp.run(func(push func(tokenJob)) error {
 		for si, s := range ss {
 			key := s.Harness + ":" + s.ID
@@ -531,7 +532,8 @@ func rebuildDead(dir string, harness string, scope string, files map[string]File
 				}
 			}
 			if ord == 0 {
-				ord = nextSessionOrd(m.Sessions)
+				ord = nextOrd
+				nextOrd++
 			}
 			owns, collided := claimSession(m.Sessions[key], s)
 			if !holdsText(s) {
@@ -1467,6 +1469,7 @@ func writeSessionsWithSync(tmp, dir string, ss []model.Session, files map[string
 		return err
 	}
 	defer sp.cleanup()
+	nextOrd := nextSessionOrd(m.Sessions)
 	err = sp.run(func(push func(tokenJob)) error {
 		for si, s := range ss {
 			key := s.Harness + ":" + s.ID
@@ -1487,7 +1490,8 @@ func writeSessionsWithSync(tmp, dir string, ss []model.Session, files map[string
 				}
 			}
 			if ord == 0 {
-				ord = nextSessionOrd(m.Sessions)
+				ord = nextOrd
+				nextOrd++
 			}
 			owns, collided := claimSession(m.Sessions[key], s)
 			if !holdsText(s) {
@@ -4347,6 +4351,7 @@ func appendIncremental(dir, harness, scope string, old Manifest, files map[strin
 	if m.Sessions == nil {
 		m.Sessions = map[string]SessionMeta{}
 	}
+	nextOrd := nextSessionOrd(m.Sessions)
 	// Sorted, not map order: two sessions can claim the same harness:id, and
 	// which one wins decided the project a whole conversation was filed under
 	// — differently on every run (#698).
@@ -4404,7 +4409,8 @@ func appendIncremental(dir, harness, scope string, old Manifest, files map[strin
 			meta := m.Sessions[key]
 			named := meta.ID != ""
 			if !named {
-				meta = metaWithOrd(metaForSession(s), nextSessionOrd(m.Sessions))
+				meta = metaWithOrd(metaForSession(s), nextOrd)
+				nextOrd++
 			}
 			if meta.Started.IsZero() || (!s.Started.IsZero() && s.Started.Before(meta.Started)) {
 				meta.Started = s.Started

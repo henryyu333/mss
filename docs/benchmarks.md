@@ -295,3 +295,26 @@ index-size gains, or cross-platform speedups. In particular, the generator's
 Claude project-folder spelling exercises a project-name fallback; these
 query-only results do not treat that parser path as a normal cold-build cost.
 The index format and record compression threshold are unchanged.
+
+## Ingest-path comparison (unreleased)
+
+Measured on 2026-10-19 on Apple M3, macOS arm64, Go 1.27.1, using the same
+isolated 10k and 20k generators. Both binaries use `CGO_ENABLED=0`,
+`-trimpath` and release-style `-s -w` flags. The Claude project folder is named
+to match the recorded `cwd` for this comparison, so it measures normal project
+resolution rather than the generator's fallback path above. Runs alternate
+between the two binaries; the table gives median `mss index --rebuild --quiet`
+wall time.
+
+| Sessions | Before | After |
+| ---: | ---: | ---: |
+| 10,000 | 1.617 s | 1.144 s |
+| 20,000 | 4.811 s | 2.744 s |
+
+The change scans existing ordinals once per pass and uses a 64 KiB initial
+JSONL buffer instead of 1 MiB per file. Peak RSS was approximately unchanged
+(about 227 MB before and 232 MB after on the 10k runs), so this is a CPU and
+allocation-volume result, not a memory-ceiling result. A 10k incremental
+append measured 0.109 s before and 0.111 s after; no material change is claimed
+for that path. Source digests stayed unchanged, search identity matched, and
+the existing retrieval and fault-recovery assertions passed.

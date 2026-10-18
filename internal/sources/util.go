@@ -300,6 +300,11 @@ func scanJSONLWithHeaderFromOffsetFunc(path string, offset int64, lookahead int,
 // headerLookahead is how many leading lines may come before a header.
 const headerLookahead = 4
 
+// jsonlReadBuffer is the initial read size for JSONL transcripts. It is small
+// enough that a directory of short sessions does not allocate a megabyte per
+// file, and bufio grows it as needed for a longer line; it is not a limit.
+const jsonlReadBuffer = 64 * 1024
+
 // leadingJSONLHeader decodes the first of a JSONL file's leading lines that
 // isHeader accepts, looking no further than lookahead lines or the offset, or
 // nil when none is there.
@@ -309,7 +314,7 @@ func leadingJSONLHeader(path string, offset int64, lookahead int, isHeader func(
 		return nil
 	}
 	defer f.Close()
-	r := bufio.NewReaderSize(io.LimitReader(f, offset), 1024*1024)
+	r := bufio.NewReaderSize(io.LimitReader(f, offset), jsonlReadBuffer)
 	for range lookahead {
 		line, err := r.ReadBytes('\n')
 		if line = trimJSONSpace(line); len(line) > 0 {
@@ -389,7 +394,7 @@ func scanJSONLFromOffset(path string, offset int64, fn func(map[string]any)) err
 			return err
 		}
 	}
-	r := bufio.NewReaderSize(boundedFrom(path, f, offset), 1024*1024)
+	r := bufio.NewReaderSize(boundedFrom(path, f, offset), jsonlReadBuffer)
 	for {
 		line, err := r.ReadBytes('\n')
 		// A UTF-8 BOM on the first line would fail the JSON decode below, so the

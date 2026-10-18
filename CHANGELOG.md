@@ -6,6 +6,15 @@ All notable changes to mss are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Index builds allocate new session ordinals from one pass-local counter
+  instead of rescanning every session row for each new session, removing
+  quadratic work on large cold builds.
+- JSONL readers start with a 64 KiB buffer and grow it for longer lines,
+  reducing per-file allocation for short sessions without imposing a line
+  length limit.
+
 ## [0.3.1] - 2026-10-19
 
 ### Changed
