@@ -138,7 +138,12 @@ func ManifestBuiltAt(dir string) time.Time {
 	if dir == "" {
 		dir = DefaultDir()
 	}
-	m, err := readManifest(dir)
+	// Cached, like SessionCount: the doctor row asks this next to
+	// ManifestSourcesReadAt and IngestHealth, so each call decoding the
+	// manifest again was the same waste. The fingerprint still sees a
+	// rebuild or a rewrite, and a store the manifest cannot describe —
+	// unreadable, or one that predates BuiltAt — keeps the mtime it had.
+	m, err := readManifestCached(dir)
 	if err == nil && !m.BuiltAt.IsZero() {
 		return m.BuiltAt
 	}
@@ -158,7 +163,7 @@ func ManifestSourcesReadAt(dir string) time.Time {
 	if dir == "" {
 		dir = DefaultDir()
 	}
-	m, err := readManifest(dir)
+	m, err := readManifestCached(dir)
 	if err == nil && !m.SourcesReadAt.IsZero() {
 		return m.SourcesReadAt
 	}
@@ -170,6 +175,12 @@ func ManifestSourcesReadAt(dir string) time.Time {
 	// upgrades.
 	if err == nil && len(m.Files) == 0 {
 		return time.Time{}
+	}
+	// The legacy fallback answers BuiltAt: the decode this call already did
+	// when it succeeded, mtime when it did not or when BuiltAt was never
+	// recorded.
+	if err == nil && !m.BuiltAt.IsZero() {
+		return m.BuiltAt
 	}
 	return ManifestBuiltAt(dir)
 }

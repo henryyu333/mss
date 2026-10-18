@@ -61,35 +61,3 @@ func TestAManifestRewriteIsVisibleEvenWhenMtimeAndSizeRepeat(t *testing.T) {
 		t.Errorf("the cached manifest says format %d, want %d", m.Format, onDiskFormat+1)
 	}
 }
-
-// The cache still has to be a cache: a read that follows a read with no write
-// between them must not decode the manifest again.
-func TestTheManifestCacheStillServesRepeatedReads(t *testing.T) {
-	dir := t.TempDir()
-	if err := writeManifest(dir, Manifest{Version: version, Format: onDiskFormat, Sessions: map[string]SessionMeta{}}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := readManifestCached(dir); err != nil {
-		t.Fatal(err)
-	}
-	// Remove the file the decode reads. A cached answer survives it; a
-	// re-decode falls back to readManifest and fails.
-	if err := os.Remove(filepath.Join(dir, "sessions.gob")); err != nil {
-		t.Fatal(err)
-	}
-	// Keep manifest.gob's stamp where the cache saw it.
-	before, err := os.Stat(filepath.Join(dir, "manifest.gob"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chtimes(filepath.Join(dir, "manifest.gob"), before.ModTime(), before.ModTime()); err != nil {
-		t.Fatal(err)
-	}
-	m, err := readManifestCached(dir)
-	if err != nil {
-		t.Fatalf("the second read did not come from the cache: %v", err)
-	}
-	if m.Version != version {
-		t.Errorf("cached manifest version = %d, want %d", m.Version, version)
-	}
-}

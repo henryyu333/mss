@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -62,11 +63,14 @@ func IngestHealth(dir string) map[string]HarnessIngest {
 	if dir == "" {
 		dir = DefaultDir()
 	}
-	m, err := readManifest(dir)
+	m, err := readManifestCached(dir)
 	if err != nil {
 		return nil
 	}
-	return m.IngestHealth
+	// The cached manifest is shared, so callers keep the ownership they had
+	// under readManifest: a copy, free to keep and to write, that nothing
+	// else answers from.
+	return maps.Clone(m.IngestHealth)
 }
 
 // IngestFilesReport returns the same story per file: which path each refused
@@ -77,11 +81,31 @@ func IngestFilesReport(dir string) map[string]FileIngest {
 	if dir == "" {
 		dir = DefaultDir()
 	}
-	m, err := readManifest(dir)
+	m, err := readManifestCached(dir)
 	if err != nil {
 		return nil
 	}
-	return m.IngestFiles
+	if m.IngestFiles == nil {
+		return nil
+	}
+	// The cached manifest is shared, so the report is a copy with the same
+	// ownership a fresh decode used to hand over: a caller that writes into
+	// a row's Unusable or ClippedMsgIdx must not corrupt what the next
+	// caller is served.
+	out := make(map[string]FileIngest, len(m.IngestFiles))
+	for p, e := range m.IngestFiles {
+		e.ClippedSessions = maps.Clone(e.ClippedSessions)
+		if e.ClippedMsgIdx != nil {
+			idx := make(map[string][]int, len(e.ClippedMsgIdx))
+			for s, v := range e.ClippedMsgIdx {
+				idx[s] = slices.Clone(v)
+			}
+			e.ClippedMsgIdx = idx
+		}
+		e.Unusable = maps.Clone(e.Unusable)
+		out[p] = e
+	}
+	return out
 }
 
 // mergeIngestDiag folds the sources side-channel counters into the manifest.
@@ -206,44 +230,12 @@ func mergeIngestDiag(m *Manifest) {
 	passParsed, passRead = nil, nil
 }
 
-// healthFromFiles sums the per-file counts per harness.
-//
-// Paths in order, because LastError is one of them: taking whichever the map
-// handed over last gave the same index a different error on every run, so a
-// script diffing `doctor --json` saw a change where nothing changed (#2245).
-// The first failing path is the one quoted; ingest_files holds them all.
+// healthFromFiles classifies all diagnostic paths against one registry selection.
 func healthFromFiles(files map[string]FileIngest) map[string]HarnessIngest {
-	out := map[string]HarnessIngest{}
-	paths := make([]string, 0, len(files))
-	for p := range files {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-	for _, p := range paths {
-		e := files[p]
-		// The store, not the file kind: the run narrates "cline" and doctor
-		// filed the same fact under "cline-sdk", while the documentation calls
-		// this key a harness. Five stores have kinds by another name, so for
-		// those a script keyed on the documented name found nothing (#2234).
-		h := sources.HarnessForKind(harnessForPath(p))
-		if h == "" {
-			continue
-		}
-		cur := out[h]
-		cur.MalformedLines += e.Malformed
-		cur.ClippedMessages += e.Clipped
-		if e.Error != "" {
-			cur.FailedFiles++
-			if cur.LastError == "" {
-				cur.LastError = e.Error
-			}
-		}
-		out[h] = cur
-	}
-	if len(out) == 0 {
+	if len(files) == 0 {
 		return nil
 	}
-	return out
+	return newStoreLookup().healthFromFiles(files)
 }
 
 // UpToDate reports whether Ensure would do nothing, and how many sessions the
@@ -4755,20 +4747,10 @@ func parseAppendedFile(harness, p string, old FileState, isNew bool) (ss []model
 // harnessForPath maps an ingest-diagnostic path to the harness it belongs to.
 // A directory has no transcript extension, so the matchers reject it outright;
 // asking what a transcript inside it would be is the same question the walk
-// was already answering (#818).
+// was already answering (#818). A lone call builds its own storeLookup, so an
+// environment change since the last call is seen here too.
 func harnessForPath(p string) string {
-	if h := sources.KindForPath(p); h != "" {
-		return h
-	}
-	if filepath.Ext(p) != "" {
-		return ""
-	}
-	for _, name := range []string{"probe.jsonl", "probe.json", "probe.md"} {
-		if h := sources.KindForPath(filepath.Join(p, name)); h != "" {
-			return h
-		}
-	}
-	return ""
+	return newStoreLookup().pathKind(p)
 }
 
 // setDatabaseStoreWatermarks stamps every store mss reads through SQLite:

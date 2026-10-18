@@ -63,6 +63,13 @@ Files:
   `commandfails-state.gob` or `sessionfacts.gob`; this build has no reader for
   them and removes them on the next index pass.
 
+Read-only refresh clocks and ingest reports share the process-local decoded
+manifest cache, validated by file identity, timestamp, size and CRC. Writers
+continue to read their own mutable manifest and invalidate the cache on commit.
+Diagnostic reports copy their maps, including nested clip positions, before
+returning them. Search coverage constructs one source lookup per report; it
+never freezes source selection or roots globally between invocations.
+
 ### Roles
 
 Beyond `user`, `assistant` and `developer`, records carry what the agent did:

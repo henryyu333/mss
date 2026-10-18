@@ -33,14 +33,18 @@ func SearchCoverage(dir string) *query.Coverage {
 		cov.Complete = false
 		return cov
 	}
+	// One lookup for the whole report: the read marks, the unread walk and the
+	// health fold all classify on the same selected registry instead of
+	// rebuilding it per path.
+	lookup := newStoreLookup()
 	read := map[string]bool{}
 	for p := range m.Files {
-		if h := sources.HarnessForKind(harnessForPath(p)); h != "" {
+		if h := lookup.storeForPath(p); h != "" {
 			read[h] = true
 		}
 	}
 	order := map[string]int{}
-	for i, h := range sources.Registry() {
+	for i, h := range lookup.selected {
 		order[h.Name] = i
 		if read[h.Name] {
 			continue
@@ -65,7 +69,7 @@ func SearchCoverage(dir string) *query.Coverage {
 		cov.Unread = append(cov.Unread, h.Name+": "+reason)
 	}
 	sort.Strings(cov.Unread)
-	health := healthFromFiles(m.IngestFiles)
+	health := lookup.healthFromFiles(m.IngestFiles)
 	for _, name := range sortedHarnessNames(health, order) {
 		h := health[name]
 		if h.MalformedLines == 0 && h.FailedFiles == 0 {

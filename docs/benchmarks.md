@@ -259,3 +259,39 @@ A report with `status: "FAIL"` is a failed consumer assertion or execution, not
 a number to discard or a reason to relabel the gold. Diagnose the actual failure,
 retain the failed artifact, fix the underlying issue or explain the unmet
 criterion, and use a new output path for a new run.
+
+## Query-path comparison for v0.3.1
+
+Measured on 2026-10-19 on Apple M3, macOS arm64, Go 1.27.1. The baseline is
+`d54b7d4`; the candidate is a locally built v0.3.1, not a downloaded release
+artifact. Both use `CGO_ENABLED=0`, `-trimpath` and release-style `-s -w`
+linker flags. The unchanged generator above creates 10,000 sessions and
+120,000 messages across Claude, Codex, Pi and OMP.
+
+The baseline built one isolated index. Both binaries then read that same index
+with `--no-refresh`, `MSS_MOVED=0`, warmed filesystem caches and captured output.
+Each command has 15 samples per binary, alternating which binary runs first;
+the table gives subprocess wall-time medians, including process startup.
+Search uses `quartz cobalt`; show reads the first Claude session with
+`--harness claude --limit 4`. No competing test/build job ran during timing.
+
+| Command | Before | After |
+| --- | ---: | ---: |
+| `show --json --no-refresh` | 39.25 ms | 24.97 ms |
+| `show --brief --no-refresh` | 47.66 ms | 26.39 ms |
+| `search --json --no-refresh` | 78.47 ms | 54.49 ms |
+| `search --no-refresh` (text) | 72.63 ms | 36.61 ms |
+| `search --sessions --no-refresh` | 78.32 ms | 54.47 ms |
+
+JSON fields matched the baseline after excluding the time-dependent BM25
+`score`; text output matched exactly. Source and index byte digests stayed
+unchanged around the queries, proving old-index reuse without a rebuild. A
+separate candidate run at 10,000 sessions passed all 13 frozen labels with
+zero false positives/negatives and all six fault-recovery phases.
+
+These measurements target repeated metadata decoding and coverage work. They
+do not establish real-history latency, cold-cache latency, build-time gains,
+index-size gains, or cross-platform speedups. In particular, the generator's
+Claude project-folder spelling exercises a project-name fallback; these
+query-only results do not treat that parser path as a normal cold-build cost.
+The index format and record compression threshold are unchanged.

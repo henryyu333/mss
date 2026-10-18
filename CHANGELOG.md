@@ -6,12 +6,25 @@ All notable changes to mss are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-19
+
+### Changed
+
+- Read-only refresh timestamps and ingest reports reuse the validated manifest
+  cache instead of repeatedly decoding both metadata files. Returned diagnostic
+  maps remain caller-owned, including nested clip positions.
+- Search coverage reuses one operation-local source registry. Plain-text search
+  skips coverage data that only JSON consumes; JSON coverage, store selection,
+  query results and the on-disk index format are unchanged.
+- Search/show reuse one last-refresh timestamp for JSON and stderr. Index
+  diagnostics read the ingest-health report once.
+
 ### Removed
 
 - The `fixes.gob`, `commandfails.gob`, `commandfails-state.gob` and
   `sessionfacts.gob` sidecars, with their miners and readers. No current
-  command reads them; they were rebuilt on every index pass. Existing indexes
-  keep the files until the next `mss index`, which removes them.
+  command reads them; they could still be mined during full and incremental
+  indexing. `mss index` removes the leftover files from existing indexes.
 
 ## [0.3.0] - 2026-10-09
 
@@ -118,7 +131,8 @@ First public release.
 - Prebuilt archives for macOS, Linux and Windows (Windows untested), and a
   Homebrew cask.
 
-[Unreleased]: https://github.com/henryyu333/mss/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/henryyu333/mss/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/henryyu333/mss/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/henryyu333/mss/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/henryyu333/mss/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/henryyu333/mss/releases/tag/v0.1.0

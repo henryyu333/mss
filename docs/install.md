@@ -1,48 +1,49 @@
 # Install, update, and remove MSS
 
-**v0.3.0 is published.** The v0.3.0 downloads, source archive, and pinned
-Go-install command below are live. Release packaging passed the tag-triggered
-three-platform workflow and native archive validation; archives are still
-unsigned and not notarized, and real-user/interactive acceptance remains a
-separate pending gate. See [release evidence](release-v0.3.0.md).
+**Current version: v0.3.1.** The pinned commands and archive names below select
+that version. Tag-triggered CI and native archive validation gate publication.
+Archives remain unsigned and not notarized, and real-user/interactive acceptance
+remains pending. The original distribution checks are recorded in the
+[v0.3.0 release evidence](release-v0.3.0.md); the external Homebrew tap is
+maintained separately.
 
 ## Choose a binary installation method
 
 ### Release archives (macOS, Linux, Windows)
 
 Use the explicit
-[v0.3.0 release](https://github.com/henryyu333/mss/releases/tag/v0.3.0), not a
+[v0.3.1 release](https://github.com/henryyu333/mss/releases/tag/v0.3.1), not a
 moving `latest` link. Choose one of the six binary archives:
 
 | OS | Architecture | Archive |
 | --- | --- | --- |
-| macOS | Apple Silicon | `mss_0.3.0_darwin_arm64.tar.gz` |
-| macOS | Intel | `mss_0.3.0_darwin_amd64.tar.gz` |
-| Linux | ARM64 | `mss_0.3.0_linux_arm64.tar.gz` |
-| Linux | x86-64 | `mss_0.3.0_linux_amd64.tar.gz` |
-| Windows | ARM64 | `mss_0.3.0_windows_arm64.zip` |
-| Windows | x86-64 | `mss_0.3.0_windows_amd64.zip` |
+| macOS | Apple Silicon | `mss_0.3.1_darwin_arm64.tar.gz` |
+| macOS | Intel | `mss_0.3.1_darwin_amd64.tar.gz` |
+| Linux | ARM64 | `mss_0.3.1_linux_arm64.tar.gz` |
+| Linux | x86-64 | `mss_0.3.1_linux_amd64.tar.gz` |
+| Windows | ARM64 | `mss_0.3.1_windows_arm64.zip` |
+| Windows | x86-64 | `mss_0.3.1_windows_amd64.zip` |
 
 Download `checksums.txt` from the same release. Compute the downloaded archive's
 SHA256 and compare the full value with its exact filename's entry:
 
 ```sh
 # macOS example
-shasum -a 256 mss_0.3.0_darwin_arm64.tar.gz
+shasum -a 256 mss_0.3.1_darwin_arm64.tar.gz
 # Linux example
-sha256sum mss_0.3.0_linux_amd64.tar.gz
+sha256sum mss_0.3.1_linux_amd64.tar.gz
 ```
 
 ```powershell
 # Windows example
-Get-FileHash .\mss_0.3.0_windows_amd64.zip -Algorithm SHA256
+Get-FileHash .\mss_0.3.1_windows_amd64.zip -Algorithm SHA256
 ```
 
 Extract into a fresh directory. Put only `mss` (`mss.exe` on Windows) in a
 user-owned directory on PATH; keep the accompanying docs and skills for review.
 Archives contain `LICENSE`, both READMEs, this guide, both language variants of
 the skill, and **`skills/mss/agents/openai.yaml`**, the Codex companion policy.
-Check `mss version` reports `mss 0.3.0` and check which binary your shell resolves
+Check `mss version` reports `mss 0.3.1` and check which binary your shell resolves
 (`command -v mss` on POSIX; `Get-Command mss` in PowerShell).
 
 **Checksums detect corruption, not publisher identity.** There are no release
@@ -55,10 +56,10 @@ source. Do not globally disable Gatekeeper or remove quarantine recursively.
 
 ### Pinned Go installation (Go 1.25 or newer)
 
-From the published v0.3.0 tag:
+From the published v0.3.1 tag:
 
 ```sh
-go install github.com/henryyu333/mss/cmd/mss@v0.3.0
+go install github.com/henryyu333/mss/cmd/mss@v0.3.1
 mss version
 ```
 
@@ -67,13 +68,13 @@ specific directory on PATH (on Windows inspect `go env GOBIN GOPATH`). Do not us
 `@latest` when reproducibility matters. This method builds from tagged module
 source and includes the embedded skills; it does not download the release
 archives or install any skill automatically.
-Release builds print `mss 0.3.0`; Go's module-version fallback prints
-`mss v0.3.0`. They identify the same tag and carry the same Skill assets.
+Release builds print `mss 0.3.1`; Go's module-version fallback prints
+`mss v0.3.1`. They identify the same tag and carry the same Skill assets.
 
 To build the same tag locally instead of via `go install`:
 
 ```sh
-go build -trimpath -ldflags "-X main.version=0.3.0" -o ./mss ./cmd/mss
+go build -trimpath -ldflags "-X main.version=0.3.1" -o ./mss ./cmd/mss
 ./mss version
 ```
 
@@ -317,7 +318,7 @@ formula/checksums. Three native runner jobs download that same immutable Actions
 artifact and run:
 
 ```sh
-python tools/verify-release.py verify --dist dist --tag v0.3.0
+python tools/verify-release.py verify --dist dist --tag v0.3.1
 ```
 
 The stdlib-only validator checks the complete six binary + source + formula

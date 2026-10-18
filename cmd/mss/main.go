@@ -364,8 +364,9 @@ func cmdIndex(dir string, rest []string) error {
 	// A store mss could not read loses its sessions from recall, and the index
 	// run is where someone is looking at the counts — doctor knowing about it
 	// is not the same as saying it here (#818).
-	for _, h := range sortedHarnesses(index.IngestHealth(dir)) {
-		e := index.IngestHealth(dir)[h]
+	health := index.IngestHealth(dir)
+	for _, h := range sortedHarnesses(health) {
+		e := health[h]
 		if e.FailedFiles == 0 {
 			continue
 		}
@@ -468,7 +469,7 @@ func cmdShow(dir string, rest []string, sourceInstance string) error {
 			return errNoIndexToRead
 		}
 		refresh = refreshStanza(dir)
-		printNoRefreshNote(os.Stderr, dir)
+		printNoRefreshNote(os.Stderr, refresh.LastRefresh)
 	} else if err := ensureIndex(dir, "", false, os.Stderr); err == nil {
 		fresh = true
 	}
@@ -1169,9 +1170,9 @@ func refreshStanza(dir string) *query.Refresh {
 // printNoRefreshNote says on stderr what the refresh stanza says in JSON.
 // Silence here would make a stale answer indistinguishable from a fresh one
 // for a reader watching the terminal.
-func printNoRefreshNote(w io.Writer, dir string) {
-	if t := index.ManifestSourcesReadAt(dir); !t.IsZero() {
-		fmt.Fprintf(w, "mss: answering from the index as it was — no refresh ran; it was last refreshed %s (run `mss index` to refresh it)\n", t.Local().Format("2006-01-02 15:04"))
+func printNoRefreshNote(w io.Writer, lastRefresh time.Time) {
+	if !lastRefresh.IsZero() {
+		fmt.Fprintf(w, "mss: answering from the index as it was — no refresh ran; it was last refreshed %s (run `mss index` to refresh it)\n", lastRefresh.Local().Format("2006-01-02 15:04"))
 		return
 	}
 	fmt.Fprintf(w, "mss: answering from the index as it was — no refresh ran, and the index records no refresh time (run `mss index` to refresh it)\n")
@@ -1280,7 +1281,7 @@ func searchWithOptions(dir string, args []string, sourceInstance string, bare bo
 			return errNoIndexToRead
 		}
 		o.Refresh = refreshStanza(dir)
-		printNoRefreshNote(os.Stderr, dir)
+		printNoRefreshNote(os.Stderr, o.Refresh.LastRefresh)
 	} else if err := withBuildProgress(func() error { return ensureForCLISearch(dir, o, force, os.Stderr) }); err != nil {
 		// A store that cannot be written still has an index that can be read:
 		// answering from it beats answering nothing (#904).
@@ -1306,12 +1307,16 @@ func searchWithOptions(dir string, args []string, sourceInstance string, bare bo
 			o.ExcludeSessions[id] = true
 		}
 	}
-	o.Coverage = index.SearchCoverage(dir)
-	if o.ExcludeSelf != "" {
-		o.Coverage.SelfRequested = true
-		o.Coverage.SelfExcluded = selfFound
-		if !selfFound {
-			o.Coverage.Complete = false
+	// Coverage is serialized only in machine output. Plain text still gets
+	// refresh/store warnings, without classifying every indexed source again.
+	if o.JSON {
+		o.Coverage = index.SearchCoverage(dir)
+		if o.ExcludeSelf != "" {
+			o.Coverage.SelfRequested = true
+			o.Coverage.SelfExcluded = selfFound
+			if !selfFound {
+				o.Coverage.Complete = false
+			}
 		}
 	}
 	result, err := searchFromIndex(dir, o, noRefresh)
