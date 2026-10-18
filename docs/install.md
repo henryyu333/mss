@@ -233,7 +233,7 @@ POSIX; `USERPROFILE` on Windows):
 The selected language is always installed as `SKILL.md`. Codex also receives
 `agents/openai.yaml` with `policy.allow_implicit_invocation: false`; copying only
 `SKILL.md` is an incomplete Codex installation. Both skill language variants
-carry `metadata.mss-version: "0.3.0"` and `disable-model-invocation: true`.
+carry `metadata.mss-version: "0.3.1"` and `disable-model-invocation: true`.
 Installation refuses a differing existing file or unsafe/symlink destination;
 an identical reinstall is safe. Custom harness skill directories require a
 manual, reviewed copy of the same selected assets, including the Codex policy;

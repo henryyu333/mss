@@ -23,7 +23,7 @@ Go build metadata; a version string alone is not binary provenance.
 
 ```sh
 BENCH_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/mss-benchmark-results.XXXXXX")"
-go build -trimpath -ldflags '-X main.version=0.3.0' -o "$BENCH_ROOT/mss" ./cmd/mss
+go build -trimpath -ldflags '-X main.version=0.3.1' -o "$BENCH_ROOT/mss" ./cmd/mss
 
 # Small end-to-end CI smoke: all assertions, not a performance gate.
 python3 tools/benchmark.py --binary "$BENCH_ROOT/mss" \
