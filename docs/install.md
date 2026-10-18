@@ -85,17 +85,21 @@ the official artifacts.
 ### Homebrew: source-built Formula
 
 The external [henryyu333/homebrew-tap](https://github.com/henryyu333/homebrew-tap)
-now ships the source-built v0.3.0 Formula, published verbatim from the release
+now ships the source-built v0.3.1 Formula, published verbatim from the release
 pipeline; the v0.2.0-era binary Cask is gone. A fresh
 `brew install --formula henryyu333/tap/mss` builds it, and
 `brew upgrade henryyu333/tap/mss` moves a Formula installation forward.
-Tested-environment status is recorded in the
-[release evidence](release-v0.3.0.md).
+The [tap update](https://github.com/henryyu333/homebrew-tap/commit/8535d53db1c2d0ac2496614ab94a24c77a7d94b6)
+passed strict online audit, native macOS arm64 source build, the Formula test,
+and isolated retrieval/recovery smoke checks. The existing Cask was preserved;
+historical platform limits remain in the [release evidence](release-v0.3.0.md).
 
 The old v0.2.0 binary Cask's quarantine-removing hook is removed, not retained
 as a migration mechanism. No Gatekeeper bypass, recursive `xattr`, `--no-quarantine`,
 `--force`, `--overwrite`, or automatic agent installation is needed.
 `sqlite3` and `zstd` remain optional runtime tools.
+Homebrew may upgrade build dependencies such as Go. `--skip-link` preserves the
+MSS prefix link; it does not freeze dependency versions.
 
 A fresh installation uses:
 
