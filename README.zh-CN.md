@@ -6,7 +6,7 @@
 
 MSS 为本机已有、格式受支持的会话记录建立索引。你可以直接用 CLI 搜索，也可以明确要求 Agent 执行随附的 Skill。Skill 搜索并读取相关会话，再根据证据总结，附上会话 ID、日期和逐字引用。它必须区分命中、候选、未找到和覆盖不完整，不维护整理后的“记忆”，也不在每轮对话中注入历史。
 
-**v0.3.1** 减少 search/show 重复读取元数据的工作，并移除无人使用的缓存旁文件，不改变索引格式。详见[更新记录](CHANGELOG.md)与[查询实测](docs/benchmarks.md)。归档仍未签名、未经公证；真实外部用户的交互式宿主验收仍待完成，原有分发验证见[v0.3.0 发布证据](docs/release-v0.3.0.md)。
+**v0.3.2** 降低大会话库冷建索引的开销，并保留 v0.3.1 的查询路径优化，不改变索引格式。详见[更新记录](CHANGELOG.md)与[性能实测](docs/benchmarks.md)。归档仍未签名、未经公证；真实外部用户的交互式宿主验收仍待完成，原有分发验证见[v0.3.0 发布证据](docs/release-v0.3.0.md)。
 
 ## 虚构数据演示
 
@@ -27,9 +27,9 @@ mss show 7f3a9c21 --around 3 --brief --no-refresh
 需要 Go 1.25 或更新版本。安装已发布的版本，或从同一标签构建源码：
 
 ```sh
-go install github.com/henryyu333/mss/cmd/mss@v0.3.1
-# 或者，在审核过的 v0.3.1 标签检出中：
-go build -trimpath -ldflags "-X main.version=0.3.1" -o ./mss ./cmd/mss
+go install github.com/henryyu333/mss/cmd/mss@v0.3.2
+# 或者，在审核过的 v0.3.2 标签检出中：
+go build -trimpath -ldflags "-X main.version=0.3.2" -o ./mss ./cmd/mss
 ./mss version
 ./mss doctor
 ./mss index
@@ -37,7 +37,7 @@ go build -trimpath -ldflags "-X main.version=0.3.1" -o ./mss ./cmd/mss
 ./mss install-skill claude --language zh-CN
 ```
 
-`mss version` 显示 `mss 0.3.1`（Go 模块版本回退显示 `mss v0.3.1`）。手动写入版本号的构建只是本地构建；只有正式发布的归档与校验和才是官方产物。Windows 构建使用 `-o .\mss.exe`，调用使用 `.\mss.exe`。让 Agent 使用前，将二进制放入用户拥有的 PATH 目录，并确认实际解析到哪个文件（`command -v mss` / `Get-Command mss`）。安装命令使用二进制内嵌、版本匹配的资源，不需要联网；遇到内容不同的现有文件会拒绝安装，不覆盖自定义 Skill。明确选择**一个**语言和宿主：
+`mss version` 显示 `mss 0.3.2`（Go 模块版本回退显示 `mss v0.3.2`）。手动写入版本号的构建只是本地构建；只有正式发布的归档与校验和才是官方产物。Windows 构建使用 `-o .\mss.exe`，调用使用 `.\mss.exe`。让 Agent 使用前，将二进制放入用户拥有的 PATH 目录，并确认实际解析到哪个文件（`command -v mss` / `Get-Command mss`）。安装命令使用二进制内嵌、版本匹配的资源，不需要联网；遇到内容不同的现有文件会拒绝安装，不覆盖自定义 Skill。明确选择**一个**语言和宿主：
 
 ```text
 mss install-skill <claude|codex|pi|omp> [--language en|zh-CN]

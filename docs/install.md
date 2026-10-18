@@ -1,6 +1,6 @@
 # Install, update, and remove MSS
 
-**Current version: v0.3.1.** The pinned commands and archive names below select
+**Current version: v0.3.2.** The pinned commands and archive names below select
 that version. Tag-triggered CI and native archive validation gate publication.
 Archives remain unsigned and not notarized, and real-user/interactive acceptance
 remains pending. The original distribution checks are recorded in the
@@ -12,38 +12,38 @@ maintained separately.
 ### Release archives (macOS, Linux, Windows)
 
 Use the explicit
-[v0.3.1 release](https://github.com/henryyu333/mss/releases/tag/v0.3.1), not a
+[v0.3.2 release](https://github.com/henryyu333/mss/releases/tag/v0.3.2), not a
 moving `latest` link. Choose one of the six binary archives:
 
 | OS | Architecture | Archive |
 | --- | --- | --- |
-| macOS | Apple Silicon | `mss_0.3.1_darwin_arm64.tar.gz` |
-| macOS | Intel | `mss_0.3.1_darwin_amd64.tar.gz` |
-| Linux | ARM64 | `mss_0.3.1_linux_arm64.tar.gz` |
-| Linux | x86-64 | `mss_0.3.1_linux_amd64.tar.gz` |
-| Windows | ARM64 | `mss_0.3.1_windows_arm64.zip` |
-| Windows | x86-64 | `mss_0.3.1_windows_amd64.zip` |
+| macOS | Apple Silicon | `mss_0.3.2_darwin_arm64.tar.gz` |
+| macOS | Intel | `mss_0.3.2_darwin_amd64.tar.gz` |
+| Linux | ARM64 | `mss_0.3.2_linux_arm64.tar.gz` |
+| Linux | x86-64 | `mss_0.3.2_linux_amd64.tar.gz` |
+| Windows | ARM64 | `mss_0.3.2_windows_arm64.zip` |
+| Windows | x86-64 | `mss_0.3.2_windows_amd64.zip` |
 
 Download `checksums.txt` from the same release. Compute the downloaded archive's
 SHA256 and compare the full value with its exact filename's entry:
 
 ```sh
 # macOS example
-shasum -a 256 mss_0.3.1_darwin_arm64.tar.gz
+shasum -a 256 mss_0.3.2_darwin_arm64.tar.gz
 # Linux example
-sha256sum mss_0.3.1_linux_amd64.tar.gz
+sha256sum mss_0.3.2_linux_amd64.tar.gz
 ```
 
 ```powershell
 # Windows example
-Get-FileHash .\mss_0.3.1_windows_amd64.zip -Algorithm SHA256
+Get-FileHash .\mss_0.3.2_windows_amd64.zip -Algorithm SHA256
 ```
 
 Extract into a fresh directory. Put only `mss` (`mss.exe` on Windows) in a
 user-owned directory on PATH; keep the accompanying docs and skills for review.
 Archives contain `LICENSE`, both READMEs, this guide, both language variants of
 the skill, and **`skills/mss/agents/openai.yaml`**, the Codex companion policy.
-Check `mss version` reports `mss 0.3.1` and check which binary your shell resolves
+Check `mss version` reports `mss 0.3.2` and check which binary your shell resolves
 (`command -v mss` on POSIX; `Get-Command mss` in PowerShell).
 
 **Checksums detect corruption, not publisher identity.** There are no release
@@ -56,10 +56,10 @@ source. Do not globally disable Gatekeeper or remove quarantine recursively.
 
 ### Pinned Go installation (Go 1.25 or newer)
 
-From the published v0.3.1 tag:
+From the published v0.3.2 tag:
 
 ```sh
-go install github.com/henryyu333/mss/cmd/mss@v0.3.1
+go install github.com/henryyu333/mss/cmd/mss@v0.3.2
 mss version
 ```
 
@@ -68,13 +68,13 @@ specific directory on PATH (on Windows inspect `go env GOBIN GOPATH`). Do not us
 `@latest` when reproducibility matters. This method builds from tagged module
 source and includes the embedded skills; it does not download the release
 archives or install any skill automatically.
-Release builds print `mss 0.3.1`; Go's module-version fallback prints
-`mss v0.3.1`. They identify the same tag and carry the same Skill assets.
+Release builds print `mss 0.3.2`; Go's module-version fallback prints
+`mss v0.3.2`. They identify the same tag and carry the same Skill assets.
 
 To build the same tag locally instead of via `go install`:
 
 ```sh
-go build -trimpath -ldflags "-X main.version=0.3.1" -o ./mss ./cmd/mss
+go build -trimpath -ldflags "-X main.version=0.3.2" -o ./mss ./cmd/mss
 ./mss version
 ```
 
@@ -86,7 +86,8 @@ the official artifacts.
 
 The external [henryyu333/homebrew-tap](https://github.com/henryyu333/homebrew-tap)
 now ships the source-built v0.3.1 Formula, published verbatim from the release
-pipeline; the v0.2.0-era binary Cask is gone. A fresh
+pipeline; the v0.2.0-era binary Cask is gone. The tap's v0.3.2 update is
+published separately after the GitHub release assets exist. A fresh
 `brew install --formula henryyu333/tap/mss` builds it, and
 `brew upgrade henryyu333/tap/mss` moves a Formula installation forward.
 The [tap update](https://github.com/henryyu333/homebrew-tap/commit/8535d53db1c2d0ac2496614ab94a24c77a7d94b6)
@@ -237,7 +238,7 @@ POSIX; `USERPROFILE` on Windows):
 The selected language is always installed as `SKILL.md`. Codex also receives
 `agents/openai.yaml` with `policy.allow_implicit_invocation: false`; copying only
 `SKILL.md` is an incomplete Codex installation. Both skill language variants
-carry `metadata.mss-version: "0.3.1"` and `disable-model-invocation: true`.
+carry `metadata.mss-version: "0.3.2"` and `disable-model-invocation: true`.
 Installation refuses a differing existing file or unsafe/symlink destination;
 an identical reinstall is safe. Custom harness skill directories require a
 manual, reviewed copy of the same selected assets, including the Codex policy;
@@ -322,7 +323,7 @@ formula/checksums. Three native runner jobs download that same immutable Actions
 artifact and run:
 
 ```sh
-python tools/verify-release.py verify --dist dist --tag v0.3.1
+python tools/verify-release.py verify --dist dist --tag v0.3.2
 ```
 
 The stdlib-only validator checks the complete six binary + source + formula

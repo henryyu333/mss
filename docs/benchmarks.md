@@ -23,7 +23,7 @@ Go build metadata; a version string alone is not binary provenance.
 
 ```sh
 BENCH_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/mss-benchmark-results.XXXXXX")"
-go build -trimpath -ldflags '-X main.version=0.3.1' -o "$BENCH_ROOT/mss" ./cmd/mss
+go build -trimpath -ldflags '-X main.version=0.3.2' -o "$BENCH_ROOT/mss" ./cmd/mss
 
 # Small end-to-end CI smoke: all assertions, not a performance gate.
 python3 tools/benchmark.py --binary "$BENCH_ROOT/mss" \
@@ -296,7 +296,7 @@ Claude project-folder spelling exercises a project-name fallback; these
 query-only results do not treat that parser path as a normal cold-build cost.
 The index format and record compression threshold are unchanged.
 
-## Ingest-path comparison (unreleased)
+## Ingest-path comparison for v0.3.2
 
 Measured on 2026-10-19 on Apple M3, macOS arm64, Go 1.27.1, using the same
 isolated 10k and 20k generators. Both binaries use `CGO_ENABLED=0`,

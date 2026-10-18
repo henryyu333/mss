@@ -11,9 +11,9 @@ IDs, dates, and verbatim quotes. It must distinguish matches, candidates, misses
 and incomplete coverage. It does not create curated memories or inject history
 into every conversation turn.
 
-**v0.3.1** reduces repeated metadata work in search/show and removes unused
-cache sidecars without changing the index format. See the
-[changelog](CHANGELOG.md) and [query measurements](docs/benchmarks.md).
+**v0.3.2** reduces cold-build overhead for large session stores while retaining
+the v0.3.1 query-path improvements, without changing the index format. See the
+[changelog](CHANGELOG.md) and [benchmarks](docs/benchmarks.md).
 Archives remain unsigned and not notarized. Interactive-host acceptance by real
 external users is still pending; the original distribution checks are recorded
 in the [v0.3.0 release evidence](docs/release-v0.3.0.md).
@@ -41,9 +41,9 @@ Requires Go 1.25+. Install the published release, or build the same tag from
 source:
 
 ```sh
-go install github.com/henryyu333/mss/cmd/mss@v0.3.1
-# or, from a reviewed checkout of the v0.3.1 tag:
-go build -trimpath -ldflags "-X main.version=0.3.1" -o ./mss ./cmd/mss
+go install github.com/henryyu333/mss/cmd/mss@v0.3.2
+# or, from a reviewed checkout of the v0.3.2 tag:
+go build -trimpath -ldflags "-X main.version=0.3.2" -o ./mss ./cmd/mss
 ./mss version
 ./mss doctor
 ./mss index
@@ -51,8 +51,8 @@ go build -trimpath -ldflags "-X main.version=0.3.1" -o ./mss ./cmd/mss
 ./mss install-skill claude --language en
 ```
 
-`mss version` reports `mss 0.3.1` (Go's module-version fallback prints
-`mss v0.3.1`). A locally stamped build is a local build; only the published
+`mss version` reports `mss 0.3.2` (Go's module-version fallback prints
+`mss v0.3.2`). A locally stamped build is a local build; only the published
 release archives and checksums are official. On Windows build with `-o .\mss.exe`
 and invoke `.\mss.exe`. Put the binary in a user-owned PATH directory before
 agent use, and check which binary resolves (`command -v mss` /

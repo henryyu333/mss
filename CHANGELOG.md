@@ -6,6 +6,8 @@ All notable changes to mss are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-19
+
 ### Changed
 
 - Index builds allocate new session ordinals from one pass-local counter
@@ -140,7 +142,8 @@ First public release.
 - Prebuilt archives for macOS, Linux and Windows (Windows untested), and a
   Homebrew cask.
 
-[Unreleased]: https://github.com/henryyu333/mss/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/henryyu333/mss/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/henryyu333/mss/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/henryyu333/mss/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/henryyu333/mss/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/henryyu333/mss/compare/v0.1.0...v0.2.0
