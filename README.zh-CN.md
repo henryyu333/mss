@@ -45,7 +45,19 @@ mss install-skill <claude|codex|pi|omp> [--language en|zh-CN]
 
 Codex 安装包含禁止隐式调用的 `agents/openai.yaml`；只复制 `SKILL.md` 不算完整安装。安装后重启宿主。Claude 使用 `/mss <问题>`，Pi/OMP 使用 `/skill:mss <问题>`，Codex 使用 Skill 选择器。RC 实测：Pi 与 OMP 的 `/skill:mss`、Codex 显式读取 Skill 文件均在真实模型中完成端到端召回；Claude Code 因本机自动化环境无凭据而未验证（PENDING）；TUI 交互仍未验证。详见[宿主证据与手动控制](docs/skill-compatibility.md)，其中也说明了无法可靠控制调用时，如何明确要求读取指定 Skill 文件。
 
-固定版本的安装、可选 `sqlite3`/`zstd`、PATH、更新、回滚和卸载步骤见[安装指南](docs/install.md)。Homebrew 安装源码构建的 Formula：`brew install --formula henryyu333/tap/mss`；历史 v0.2.0 Cask 用户按该指南的分阶段迁移操作。
+固定版本的安装、可选 `sqlite3`/`zstd`、PATH、更新、回滚和卸载步骤见[安装指南](docs/install.md)。
+
+### Homebrew 分发（macOS）
+
+独立的 [`henryyu333/homebrew-tap`](https://github.com/henryyu333/homebrew-tap)
+仓库发布 `Formula/mss.rb`，即 MSS 的 Homebrew 安装配方，**不是另一份 MSS 源码**。它提供 Homebrew 安装及版本升级：
+
+```sh
+brew install --formula henryyu333/tap/mss
+brew update && brew upgrade --formula henryyu333/tap/mss
+```
+
+当前 Formula 从 v0.3.2 标签对应的源码归档构建，未提供预编译的 Homebrew bottle。MSS 的发布工作流会生成带版本的 `mss.rb`，但**不会自动推送到 tap 仓库**；每次新版本均需单独发布 Formula。安装 Formula 不会自动安装 Agent Skill，也不会更改 Agent 设置；需要时显式运行 `mss install-skill`。历史 v0.2.0 Cask 用户请按[分阶段迁移说明](docs/install.md#homebrew-source-built-formula)操作。如果不需要 Homebrew，也可以使用前述 Go 或发布归档安装方式。
 
 ## 命令与结果判断
 
