@@ -75,9 +75,28 @@ the explicit file-read alternative for hosts without reliable invocation
 controls.
 
 For pinned releases, optional `sqlite3`/`zstd`, PATH, update, rollback, and
-uninstall instructions, use [the installation guide](docs/install.md). Homebrew
-installs the source-built Formula: `brew install --formula henryyu333/tap/mss`;
-historical v0.2.0 Cask users follow the staged migration in that guide.
+uninstall instructions, use [the installation guide](docs/install.md).
+
+### Homebrew distribution (macOS)
+
+The separate [`henryyu333/homebrew-tap`](https://github.com/henryyu333/homebrew-tap)
+repository publishes `Formula/mss.rb`, the Homebrew package definition for
+MSS—not a second copy of the application source. It enables installation and
+Homebrew-managed upgrades:
+
+```sh
+brew install --formula henryyu333/tap/mss
+brew update && brew upgrade --formula henryyu333/tap/mss
+```
+
+The current Formula builds v0.3.2 from its tagged source archive; no prebuilt
+Homebrew bottle is provided. The MSS release workflow generates a versioned
+`mss.rb` artifact but **does not push it to the tap**; each new release's
+Formula must be published there separately. Installing the Formula does not
+install an agent Skill or change agent settings: use `mss install-skill`
+explicitly. Historical v0.2.0 Cask users should follow the
+[staged migration instructions](docs/install.md#homebrew-source-built-formula).
+If Homebrew is not needed, use the Go or release-archive installation paths.
 
 ## Commands and result interpretation
 
