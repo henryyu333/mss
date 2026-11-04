@@ -89,7 +89,7 @@ now ships the source-built v0.4.0 Formula, published verbatim from the release
 pipeline; the v0.2.0-era binary Cask is gone. A fresh
 `brew install --formula henryyu333/tap/mss` builds it, and
 `brew upgrade henryyu333/tap/mss` moves a Formula installation forward.
-The [tap update](https://github.com/henryyu333/homebrew-tap/commit/efd52d17e23023b719929e2b32f39e20215defb4)
+The [tap update](https://github.com/henryyu333/homebrew-tap/commit/afcb553781a77cd50f94831aa79dc645a9d6d520)
 passed strict online audit, native macOS arm64 source build, the Formula test,
 and isolated retrieval/recovery smoke checks. The existing Cask was preserved;
 historical platform limits remain in the [release evidence](release-v0.3.0.md).
