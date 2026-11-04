@@ -123,7 +123,8 @@ class BenchmarkConsumerTests(unittest.TestCase):
             self.assertEqual([session.path.read_bytes() for session in first],
                              [session.path.read_bytes() for session in scaled[:64]])
             queries = benchmark.labeled_queries(first)
-            self.assertEqual([len(case.gold) for case in queries], [32, 16, 16, 8, 16, 16, 4, 1, 16, 0, 0, 0, 0])
+            self.assertEqual([len(case.gold) for case in queries],
+                             [32, 16, 16, 8, 16, 16, 4, 1, 16, 0, 0, 0, 0, 0, 0, 0, 32, 0, 1])
             self.assertEqual([case.gold for case in queries], [case.gold for case in benchmark.labeled_queries(scaled)])
             self.assertEqual({session.harness for session in second}, set(benchmark.HARNESSES))
 

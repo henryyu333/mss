@@ -48,9 +48,9 @@ POSIX setup commands are not a claim of a native Windows run.
 
 `--sessions` defaults to 2000 and must be at least 64 so the fixed labeled corpus
 is present. `--queries` defaults to 25 and is the **total** number of latency
-repetitions, round-robin over all 13 labeled queries, not 25 repetitions per
+repetitions, round-robin over all 18 labeled queries, not 25 repetitions per
 query. Every labeled query is independently checked once before timing, even if
-`--queries` is smaller than 13. `--output` is required and must be a new path:
+`--queries` is smaller than 18. `--output` is required and must be a new path:
 the runner refuses to overwrite an existing report. Reports are written on
 consumer/assertion failure as well as success, and failure exits nonzero.
 
@@ -98,7 +98,6 @@ source digests remain in the JSON for inspection.
 
 Gold is defined by the generator, not inferred from whatever MSS returns. Native
 ID plus harness is the unit of evidence. The initial labeled cases are:
-
 | Label | Query / boundary | Expected answer | Gold sessions |
 | --- | --- | --- | ---: |
 | `and_mixed_harness` | `quartz cobalt` | found | 32 |
@@ -114,12 +113,19 @@ ID plus harness is the unit of evidence. The initial labeled cases are:
 | `near_phrase_reversed` | `"copper velvet"`, against separated/reordered distractors | none | 0 |
 | `near_multiterm_candidates` | `quartz semaphore velvet copper lattice sodium unobtainiumsubject` | candidates | 0 |
 | `absent_vocabulary` | three absent, deliberately unrelated tokens | none | 0 |
-
+| `paraphrase_lexical` | `how does the retry budget shield the scheduler` — no query token appears in the corpus, but gold vocabulary overlaps | candidates | 0 |
+| `paraphrase_semantic_miss` | `release pipeline outage mitigation notes` — intent and vocabulary both absent; the measured blind spot a semantic tier would have to close | none | 0 |
+| `temporal_month_candidates` | `orchid semaphore in january` — the month is a ranking hint, not a term | candidates | 0 |
+| `temporal_since_window` | `quartz cobalt --since <cover>` — a duration that covers the corpus | found | 32 |
+| `temporal_since_excludes` | same query, `--since 1h` — a window the corpus cannot fit | none | 0 |
+| `forget_request_retrievable` | `antique maps forget` — a retraction request is itself indexed evidence | found | 1 |
 AND positives put all query terms in a single message. Phrase positives are
 contiguous and preserve order. Near-match candidate text has topical overlap,
-but no message satisfies the complete query. A `candidates` response is not a
-`found` response; a `none` response is not a candidate ranking. Those labels are
-asserted, not interchangeable ways for a test to pass.
+but no message satisfies the complete query. The paraphrase and month
+semantics labels assert the candidate/honest-miss contract rather than a
+fabricated match: a `candidates` response is not a `found` response; a `none`
+response is not a candidate ranking. Those labels are asserted, not
+interchangeable ways for a test to pass.
 
 `search --sessions` already forces JSON. The consumer reads the real version-2
 envelope: `match`, `coverage`, `total`, `capped`, and each row's nested `session`,
@@ -142,7 +148,7 @@ metadata are preserved in the report.
 Precision is `TP / (TP + FP)` and recall is `TP / (TP + FN)`, over affirmative
 composite session identities. An undefined denominator is JSON `null`, not an
 invented 100%. False-positive and false-negative counts and IDs are explicit.
-Micro metrics aggregate the 13 initial cases only; repeated latency checks and
+Micro metrics aggregate the 18 initial cases only; repeated latency checks and
 fault-injection cases do not inflate the quality denominator. Candidate counts
 remain separate. These are task-specific synthetic metrics, not model answer
 quality or a measure of real-user retrieval accuracy.
@@ -232,7 +238,7 @@ performance promise or a cross-OS result:
 | 2,000 | 24,000 | 6.8 MB | 5.2 MB | 0.652 s | 0.028 s | 0.199 s (100 tails) | 25.6 ms | 35.2 ms |
 | 10,000 | 120,000 | 34.2 MB | 25.9 MB | 3.885 s | 0.099 s | 0.676 s (100 tails) | 80.2 ms | 116.2 ms |
 
-Both runs: all 13 frozen gold labels PASS, micro precision 1.0 and recall 1.0
+Both runs: all 18 frozen gold labels PASS, micro precision 1.0 and recall 1.0
 with 0 false positives / 0 false negatives over the labeled set, all six fault
 injection phases PASS (malformed, corrupt, missing, restored sources; damaged
 index rejection and rebuild), every source digest unchanged around every MSS
