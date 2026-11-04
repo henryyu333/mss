@@ -5,6 +5,8 @@ All notable changes to mss are recorded here. The format follows
 [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+
+## [0.4.0] - 2026-11-05
 ### Added
 
 - Answered searches now append which sessions they served to `queries.log`
@@ -158,7 +160,9 @@ First public release.
 - Prebuilt archives for macOS, Linux and Windows (Windows untested), and a
   Homebrew cask.
 
-[Unreleased]: https://github.com/henryyu333/mss/compare/v0.3.2...HEAD
+
+[Unreleased]: https://github.com/henryyu333/mss/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/henryyu333/mss/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/henryyu333/mss/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/henryyu333/mss/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/henryyu333/mss/compare/v0.2.0...v0.3.0

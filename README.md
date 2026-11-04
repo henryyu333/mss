@@ -11,7 +11,7 @@ IDs, dates, and verbatim quotes. It must distinguish matches, candidates, misses
 and incomplete coverage. It does not create curated memories or inject history
 into every conversation turn.
 
-**v0.3.2** reduces cold-build overhead for large session stores while retaining
+**v0.4.0** reduces cold-build overhead for large session stores while retaining
 the v0.3.1 query-path improvements, without changing the index format. See the
 [changelog](CHANGELOG.md) and [benchmarks](docs/benchmarks.md).
 Archives remain unsigned and not notarized. Interactive-host acceptance by real
@@ -41,9 +41,9 @@ Requires Go 1.25+. Install the published release, or build the same tag from
 source:
 
 ```sh
-go install github.com/henryyu333/mss/cmd/mss@v0.3.2
-# or, from a reviewed checkout of the v0.3.2 tag:
-go build -trimpath -ldflags "-X main.version=0.3.2" -o ./mss ./cmd/mss
+go install github.com/henryyu333/mss/cmd/mss@v0.4.0
+# or, from a reviewed checkout of the v0.4.0 tag:
+go build -trimpath -ldflags "-X main.version=0.4.0" -o ./mss ./cmd/mss
 ./mss version
 ./mss doctor
 ./mss index
@@ -51,8 +51,8 @@ go build -trimpath -ldflags "-X main.version=0.3.2" -o ./mss ./cmd/mss
 ./mss install-skill claude --language en
 ```
 
-`mss version` reports `mss 0.3.2` (Go's module-version fallback prints
-`mss v0.3.2`). A locally stamped build is a local build; only the published
+`mss version` reports `mss 0.4.0` (Go's module-version fallback prints
+`mss v0.4.0`). A locally stamped build is a local build; only the published
 release archives and checksums are official. On Windows build with `-o .\mss.exe`
 and invoke `.\mss.exe`. Put the binary in a user-owned PATH directory before
 agent use, and check which binary resolves (`command -v mss` /
@@ -89,7 +89,7 @@ brew install --formula henryyu333/tap/mss
 brew update && brew upgrade --formula henryyu333/tap/mss
 ```
 
-The current Formula builds v0.3.2 from its tagged source archive; no prebuilt
+The current Formula builds v0.4.0 from its tagged source archive; no prebuilt
 Homebrew bottle is provided. The MSS release workflow generates a versioned
 `mss.rb` artifact but **does not push it to the tap**; each new release's
 Formula must be published there separately. Installing the Formula does not
