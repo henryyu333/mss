@@ -62,6 +62,13 @@ Files:
   written by an older release can still carry `fixes.gob`, `commandfails.gob`,
   `commandfails-state.gob` or `sessionfacts.gob`; this build has no reader for
   them and removes them on the next index pass.
+- `queries.log`: append-only recall log. Each answered search records which
+  sessions it served; the log feeds the bounded `reused` lift on later
+  searches — a session an earlier answer surfaced is trusted a little more
+  than an equally-placed stranger, never enough to outrank a real match.
+  It is the only file whose content cannot be re-mined from transcripts, so
+  replacement and cold-rebuild paths carry it across the directory swap.
+  Lost or deleted, the only cost is that boost's history.
 
 Read-only refresh clocks and ingest reports share the process-local decoded
 manifest cache, validated by file identity, timestamp, size and CRC. Writers

@@ -627,6 +627,7 @@ func rebuildDead(dir string, harness string, scope string, files map[string]File
 	if err := writeManifest(tmp, m); err != nil {
 		return err
 	}
+	carryQueriesLog(dir, tmp)
 	if err := swapIndexDir(dir, tmp); err != nil {
 		return err
 	}
@@ -1586,6 +1587,7 @@ func writeSessionsWithSync(tmp, dir string, ss []model.Session, files map[string
 	if err := writeManifest(tmp, m); err != nil {
 		return err
 	}
+	carryQueriesLog(dir, tmp)
 	if err := swapIndexDir(dir, tmp); err != nil {
 		return err
 	}
@@ -4088,7 +4090,7 @@ func updateIndex(dir, harness, scope string, files map[string]FileState, force b
 // update is missing until a full build, which is the ordinary staleness of a
 // derived file and not the same thing as having none.
 func carrySidecars(dir, tmp string) {
-	for _, name := range []string{commandsFile, cooccurFile} {
+	for _, name := range []string{commandsFile, cooccurFile, queriesLogFile} {
 		b, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
 			continue

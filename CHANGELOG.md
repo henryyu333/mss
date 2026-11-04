@@ -5,6 +5,22 @@ All notable changes to mss are recorded here. The format follows
 [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+### Added
+
+- Answered searches now append which sessions they served to `queries.log`
+  inside the index dir. The `reused` count on a hit reports that history, and
+  an often-served session earns a bounded lift on later searches — the
+  recursive-memory loop in its smallest form: nothing is surfaced, stored or
+  ranked unless a search ran. The log survives `--rebuild` and replaces; it
+  is best-effort, capped, and safe to delete.
+
+### Changed
+
+- The synthetic benchmark suite grows five semantic-robustness labels —
+  paraphrase lexical hit, paraphrase semantic miss, temporal window
+  candidates/exclusion, and forget-request retrievability — so the fixed
+  corpus measures recall behavior the earlier thirteen could not. 18 labels
+  now; `--queries 13` still exercises the original set.
 
 ## [0.3.2] - 2026-10-19
 

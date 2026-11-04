@@ -178,7 +178,8 @@ written against version 1:
 Stemmed search may also include `variants`; semantic search sets `semantic`.
 `superseded` (optional) carries the date of a newer same-project session whose
 matches overlap this hit — an earlier-attempt signal. `reused` (optional)
-counts recent agent recalls that served this session. `moved` (optional) is a
+counts how many earlier served answers on this machine carried this session,
+read from `queries.log` inside the index dir. `moved` (optional) is a
 sentence saying how many of the files the session touched have commits since
 it ended; only the first three hits are checked, and `MSS_MOVED=0` turns it
 off. `lifecycle`, `lifecycle_note` and `lifecycle_at` (optional) on the hit

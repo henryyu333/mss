@@ -1319,6 +1319,11 @@ func searchWithOptions(dir string, args []string, sourceInstance string, bare bo
 			}
 		}
 	}
+	// RecallWorn is the index's own memory of which sessions past answers
+	// served: the log inside the index dir, read fresh per query so a run
+	// after someone else's search still sees it.
+	o.RecallWorn = index.RecallCounts(dir)
+
 	result, err := searchFromIndex(dir, o, noRefresh)
 	if err != nil {
 		if noRefresh && index.IsCorrupt(err) {
@@ -1369,7 +1374,7 @@ func searchWithOptions(dir string, args []string, sourceInstance string, bare bo
 	case search.TierRelevance:
 		o.Strict = result.Strict
 		fmt.Fprintln(os.Stderr, relevanceLead(result.Strict))
-		hits = markStrictHits(search.RelevanceHitsWeighted(ss, index.RelevanceMatchTerms(o.Query), result.TermIDF), result)
+		hits = markStrictHits(search.ApplyWorn(search.RelevanceHitsWeighted(ss, index.RelevanceMatchTerms(o.Query), result.TermIDF), o.RecallWorn), result)
 		// This tier ranks and truncates inside retrieval, so counting the
 		// sessions it handed back measures its window, not the match: every
 		// query deeper than the window reported the window's own size and
@@ -1476,6 +1481,13 @@ func searchWithOptions(dir string, args []string, sourceInstance string, bare bo
 		if err := printSessionsJSON(os.Stdout, listed, matchIdx, o, listCapped, listTotal); err != nil {
 			return err
 		}
+		if search.MatchLabel(o, len(hits)) == "found" {
+			keys := make([]string, 0, len(listed))
+			for _, s := range listed {
+				keys = append(keys, s.Harness+":"+s.ID)
+			}
+			index.RecordQuery(dir, o.Query, keys)
+		}
 		if mistyped {
 			return errAlreadySaid
 		}
@@ -1492,6 +1504,16 @@ func searchWithOptions(dir string, args []string, sourceInstance string, bare bo
 	// printed.
 	if o.JSON {
 		annotateHitIndices(dir, hits)
+	}
+	// Remember which sessions this answer served, so a later differently-
+	// worded ask can lift them — the recursive-memory loop in its smallest
+	// form. Only genuine matches count: candidates and misses teach nothing.
+	if len(hits) > 0 && search.MatchLabel(o, len(hits)) == "found" {
+		keys := make([]string, 0, len(hits))
+		for _, h := range hits {
+			keys = append(keys, h.Session.Harness+":"+h.Session.ID)
+		}
+		index.RecordQuery(dir, o.Query, keys)
 	}
 	search.Print(os.Stdout, hits, o)
 	// A stamp that has not happened is a date the reader cannot use, and recency

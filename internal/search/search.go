@@ -718,9 +718,9 @@ func scoreBM25(documents []bm25Document, df []int, corpusDocuments int, avgLengt
 		}
 		score *= proximityBoost(doc.minWindow, queryTokenCount)
 		score *= titleBoost(doc.titleHits, queryTokenCount)
-		// By the id as a log holds it: the counts come from .usage.jsonl, and
-		// a byte that is not valid UTF-8 is U+FFFD there and itself here, so
-		// the two never met (#2199).
+		// By the id as the log holds it: the counts come from queries.log
+		// inside the index dir, and a byte that is not valid UTF-8 is U+FFFD
+		// there and itself here, so the two never met (#2199).
 		if n := worn[model.LoggedID(doc.hit.Session.ID)]; n > 0 {
 			doc.hit.Reused = n
 			score *= wornBoost(n)
@@ -1274,6 +1274,23 @@ func wornBoost(n int) float64 {
 		return 1.5
 	}
 	return boost
+}
+
+// ApplyWorn gives the relevance tier's own ordering the same bounded lift the
+// scored path gets: a session an earlier answer served is worth a little more
+// trust than an equally-placed stranger, never enough to outrank a real match.
+func ApplyWorn(hits []Hit, worn map[string]int) []Hit {
+	if len(worn) == 0 {
+		return hits
+	}
+	for i := range hits {
+		if n := worn[model.LoggedID(hits[i].Session.ID)]; n > 0 {
+			hits[i].Reused = n
+			hits[i].Score *= wornBoost(n)
+		}
+	}
+	sort.SliceStable(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
+	return hits
 }
 
 // titleBoost rewards query tokens appearing in the session title — the
